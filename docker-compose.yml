@@ -1,0 +1,88 @@
+# MedFlow AI — full stack with one command:
+#   docker compose up -d
+# First run only: pull the AI models into the ollama container:
+#   docker compose exec ollama ollama pull llama3.2
+#   docker compose exec ollama ollama pull nomic-embed-text
+# Secrets (JWT_SECRET, JWT_REFRESH_SECRET) are read from server/.env.
+
+services:
+  mongo:
+    image: mongo:7
+    restart: unless-stopped
+    volumes:
+      - mongo_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.runCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  ollama:
+    image: ollama/ollama:latest
+    restart: unless-stopped
+    volumes:
+      - ollama_models:/root/.ollama
+
+  server:
+    build: ./server
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    env_file: ./server/.env
+    environment:
+      # Inside compose, services reach each other by service name, not localhost.
+      MONGO_URI: mongodb://mongo:27017/medflow
+      REDIS_HOST: redis
+      OLLAMA_BASE_URL: http://ollama:11434
+      UPLOAD_DIR: /app/uploads
+    volumes:
+      - uploads:/app/uploads
+    depends_on:
+      mongo:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  worker:
+    build: ./server
+    command: ["node", "src/workers/index.js"]
+    restart: unless-stopped
+    env_file: ./server/.env
+    environment:
+      MONGO_URI: mongodb://mongo:27017/medflow
+      REDIS_HOST: redis
+      OLLAMA_BASE_URL: http://ollama:11434
+      UPLOAD_DIR: /app/uploads
+    volumes:
+      - uploads:/app/uploads
+    depends_on:
+      mongo:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  client:
+    build:
+      context: ./client
+      args:
+        # The browser calls the API from the host machine, so localhost is correct.
+        NEXT_PUBLIC_API_URL: http://localhost:5000
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    depends_on:
+      - server
+
+volumes:
+  mongo_data:
+  ollama_models:
+  uploads:

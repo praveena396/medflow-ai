@@ -1,0 +1,26 @@
+# Dependencies (recreated with npm install)
+node_modules/
+
+# Secrets — never commit environment files
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+
+# Uploaded patient files and test artifacts
+uploads/
+uploads-test/
+chroma_data/
+
+# Build output
+.next/
+dist/
+build/
+*.tsbuildinfo
+
+# Editor/OS noise
+.vscode/
+.idea/
+.DS_Store

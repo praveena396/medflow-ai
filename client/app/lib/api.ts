@@ -1,0 +1,101 @@
+'use client';
+
+// Central API client: one place for the backend URL, auth headers,
+// and automatic access-token refresh on expiry.
+
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
+
+export interface AuthUser {
+  id: string;
+  email: string;
+  name: string;
+  role: 'patient' | 'doctor' | 'admin';
+}
+
+// ---------- token storage ----------
+export const getToken = () => localStorage.getItem('token');
+export const getRefreshToken = () => localStorage.getItem('refreshToken');
+export const getUser = (): AuthUser | null => {
+  const raw = localStorage.getItem('user');
+  return raw ? (JSON.parse(raw) as AuthUser) : null;
+};
+
+export const saveSession = (data: { token: string; refreshToken?: string; user?: AuthUser }) => {
+  localStorage.setItem('token', data.token);
+  if (data.refreshToken) localStorage.setItem('refreshToken', data.refreshToken);
+  if (data.user) localStorage.setItem('user', JSON.stringify(data.user));
+};
+
+export const clearSession = () => {
+  localStorage.removeItem('token');
+  localStorage.removeItem('refreshToken');
+  localStorage.removeItem('user');
+};
+
+// ---------- refresh logic ----------
+let refreshPromise: Promise<boolean> | null = null;
+
+const tryRefresh = async (): Promise<boolean> => {
+  // If several requests hit 401 at once, refresh only once and share the result.
+  if (!refreshPromise) {
+    refreshPromise = (async () => {
+      const refreshToken = getRefreshToken();
+      if (!refreshToken) return false;
+      try {
+        const res = await fetch(`${API_BASE}/api/auth/refresh`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ refreshToken }),
+        });
+        if (!res.ok) return false;
+        const data = await res.json();
+        saveSession(data);
+        return true;
+      } catch {
+        return false;
+      } finally {
+        refreshPromise = null;
+      }
+    })();
+  }
+  return refreshPromise;
+};
+
+// ---------- main fetch wrapper ----------
+export const apiFetch = async (path: string, options: RequestInit = {}): Promise<Response> => {
+  const buildHeaders = () => {
+    const headers = new Headers(options.headers);
+    const token = getToken();
+    if (token) headers.set('Authorization', `Bearer ${token}`);
+    // Don't set Content-Type for FormData — the browser adds the boundary itself.
+    if (options.body && !(options.body instanceof FormData) && !headers.has('Content-Type')) {
+      headers.set('Content-Type', 'application/json');
+    }
+    return headers;
+  };
+
+  let response = await fetch(`${API_BASE}${path}`, { ...options, headers: buildHeaders() });
+
+  // Access token expired? Refresh once and retry the original request.
+  if (response.status === 401 || response.status === 403) {
+    const refreshed = await tryRefresh();
+    if (refreshed) {
+      response = await fetch(`${API_BASE}${path}`, { ...options, headers: buildHeaders() });
+    } else {
+      clearSession();
+      if (typeof window !== 'undefined') window.location.href = '/auth/login';
+    }
+  }
+
+  return response;
+};
+
+// Convenience wrapper that parses JSON and throws on API errors.
+export const apiJson = async <T = unknown>(path: string, options: RequestInit = {}): Promise<T> => {
+  const response = await apiFetch(path, options);
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error((data as { message?: string }).message || `Request failed (${response.status})`);
+  }
+  return data as T;
+};

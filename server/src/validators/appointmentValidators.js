@@ -46,6 +46,8 @@ export const validateUpdateAppointment = validate([
     .optional()
     .isIn(APPOINTMENT_STATUSES)
     .withMessage(`status must be one of: ${APPOINTMENT_STATUSES.join(', ')}`),
+  // Visit notes saved to the health record when a doctor completes the appointment.
+  body('notes').optional().isString().withMessage('notes must be text').bail().trim().isLength({ max: 4000 }),
 ]);
 
 export const validateAppointmentId = validate([appointmentId()]);

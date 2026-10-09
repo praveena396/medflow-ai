@@ -31,6 +31,18 @@ export const validateEnv = () => {
     errors.push('OPENAI_API_KEY is required when LLM_PROVIDER=openai');
   }
 
+  if (!['mongo', 'chroma'].includes(config.vectorStore.driver)) {
+    errors.push('VECTOR_STORE must be mongo or chroma');
+  }
+  if (config.vectorStore.driver === 'chroma') {
+    try {
+      const { protocol } = new URL(config.vectorStore.chroma.url);
+      if (!['http:', 'https:'].includes(protocol)) throw new Error('bad protocol');
+    } catch {
+      errors.push('CHROMA_URL must be an http(s) URL, e.g. http://localhost:8000');
+    }
+  }
+
   if (config.storage.driver === 's3') {
     if (!config.storage.s3.bucket) errors.push('S3_BUCKET is required when FILE_STORAGE_TYPE=s3');
     if (!config.storage.s3.accessKeyId) errors.push('S3_ACCESS_KEY_ID is required when FILE_STORAGE_TYPE=s3');

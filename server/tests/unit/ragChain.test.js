@@ -10,7 +10,7 @@ vi.mock('../../src/services/vectorStoreService.js', () => ({
 
 import { llmClient } from '../../src/ai/llmClient.js';
 import { vectorStore } from '../../src/services/vectorStoreService.js';
-import { ragChain } from '../../src/ai/ragChain.js';
+import { ragChain, NOT_ENOUGH_INFORMATION_MESSAGE } from '../../src/ai/ragChain.js';
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -67,27 +67,61 @@ describe('ragChain.processQuery', () => {
     expect(prompt).toContain('Cholesterol: 242 mg/dL');
   });
 
-  it('cites no sources when similarity is below the threshold', async () => {
+  it('declines without calling the AI when similarity is below the threshold', async () => {
     vectorStore.search.mockResolvedValue({
       success: true,
       results: [{ text: 'unrelated text', score: 0.1, metadata: { fileName: 'other.pdf' } }],
     });
-    llmClient.chat.mockResolvedValue('I could not find this in your documents.');
 
     const result = await ragChain.processQuery('what is my blood type?');
     expect(result.success).toBe(true);
+    expect(result.declined).toBe(true);
+    expect(result.message).toBe(NOT_ENOUGH_INFORMATION_MESSAGE);
     expect(result.sourceDocuments).toEqual([]);
+    expect(result.confidence).toBe(0.1);
+    expect(llmClient.chat).not.toHaveBeenCalled();
+  });
+
+  it('declines when the patient has no documents at all', async () => {
+    vectorStore.search.mockResolvedValue({ success: true, results: [] });
+
+    const result = await ragChain.processQuery('what does my last report say?');
+    expect(result.declined).toBe(true);
+    expect(result.message).toMatch(/not enough information in your documents/i);
+    expect(llmClient.chat).not.toHaveBeenCalled();
+  });
+
+  it('uses the configured threshold', async () => {
+    vectorStore.search.mockResolvedValue({
+      success: true,
+      results: [{ text: 'Cholesterol: 242 mg/dL', score: 0.6, metadata: { fileName: 'lab.pdf' } }],
+    });
+    llmClient.chat.mockResolvedValue('Your cholesterol is 242 mg/dL.');
+    const original = ragChain.similarityThreshold;
+    try {
+      ragChain.setSimilarityThreshold(0.7);
+      expect((await ragChain.processQuery('cholesterol?')).declined).toBe(true);
+
+      ragChain.setSimilarityThreshold(0.5);
+      const answered = await ragChain.processQuery('cholesterol?');
+      expect(answered.declined).toBe(false);
+      expect(answered.message).toBe('Your cholesterol is 242 mg/dL.');
+    } finally {
+      ragChain.setSimilarityThreshold(original);
+    }
   });
 
   it('passes the patientId filter to the vector search', async () => {
     vectorStore.search.mockResolvedValue({ success: true, results: [] });
-    llmClient.chat.mockResolvedValue('answer');
     await ragChain.processQuery('question', { patientId: 'patient-42' });
     expect(vectorStore.search).toHaveBeenCalledWith('question', 4, { patientId: 'patient-42' });
   });
 
   it('returns a friendly error when the AI is down', async () => {
-    vectorStore.search.mockResolvedValue({ success: true, results: [] });
+    vectorStore.search.mockResolvedValue({
+      success: true,
+      results: [{ text: 'Cholesterol: 242 mg/dL', score: 0.9, metadata: { fileName: 'lab.pdf' } }],
+    });
     llmClient.chat.mockRejectedValue(new Error('timeout'));
     const result = await ragChain.processQuery('hello');
     expect(result.success).toBe(false);

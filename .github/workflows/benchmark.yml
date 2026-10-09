@@ -76,12 +76,19 @@ jobs:
           cache-dependency-path: server/package-lock.json
 
       - name: Install dependencies
-        run: npm ci
+        # --include=dev: NODE_ENV=production (set above) would otherwise make
+        # npm skip devDependencies, and autocannon is one.
+        run: npm ci --include=dev
 
       - name: Generate throwaway JWT secrets
         run: |
-          echo "JWT_SECRET=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
-          echo "JWT_REFRESH_SECRET=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+          jwt_secret=$(openssl rand -hex 32)
+          jwt_refresh_secret=$(openssl rand -hex 32)
+          # Hide them in the logs, even though they only live for this run.
+          echo "::add-mask::$jwt_secret"
+          echo "::add-mask::$jwt_refresh_secret"
+          echo "JWT_SECRET=$jwt_secret" >> "$GITHUB_ENV"
+          echo "JWT_REFRESH_SECRET=$jwt_refresh_secret" >> "$GITHUB_ENV"
 
       - name: Seed starter accounts (gives /api/appointments/doctors real rows)
         run: npm run seed

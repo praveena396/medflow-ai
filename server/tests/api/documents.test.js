@@ -16,12 +16,14 @@ import { setupTestDB, teardownTestDB, registerUser, authHeader } from '../helper
 const app = createApp();
 let patient;
 let otherPatient;
+let imagePatient;
 let documentId;
 
 beforeAll(async () => {
   await setupTestDB();
   patient = await registerUser(app);
   otherPatient = await registerUser(app);
+  imagePatient = await registerUser(app);
 });
 
 afterAll(async () => {
@@ -66,17 +68,18 @@ describe('POST /api/documents', () => {
     expect(res.status).toBe(400);
   });
 
-  it('rejects images, because OCR is not supported yet', async () => {
+  it('accepts PNG and JPEG images for OCR and queues processing', async () => {
     for (const [filename, contentType] of [
-      ['scan.png', 'image/png'],
-      ['scan.jpg', 'image/jpeg'],
+      ['lab-scan.png', 'image/png'],
+      ['prescription.jpg', 'image/jpeg'],
     ]) {
       const res = await request(app)
         .post('/api/documents')
-        .set(authHeader(patient.token))
-        .attach('file', Buffer.from('fake-image-bytes'), { filename, contentType });
-      expect(res.status).toBe(400);
-      expect(res.body.message).toMatch(/not allowed/);
+        .set(authHeader(imagePatient.token))
+        .field('documentType', 'prescription')
+        .attach('file', Buffer.from('image-bytes'), { filename, contentType });
+      expect(res.status).toBe(201);
+      expect(enqueueDocumentProcessing).toHaveBeenCalledWith(res.body.document.id);
     }
   });
 });

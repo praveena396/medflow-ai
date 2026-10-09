@@ -15,7 +15,8 @@ export const extractText = async (buffer, mimeType) => {
       return { success: true, text: buffer.toString('utf-8'), pages: 1 };
     }
 
-    // Images would need OCR (e.g. tesseract) — not supported yet.
+    // Images would need OCR (e.g. tesseract.js), which isn't built yet; uploads
+    // of PNG/JPEG are rejected (see config.documents.allowedMimeTypes).
     return {
       success: false,
       error: `Text extraction not supported for ${mimeType}`,

@@ -10,7 +10,10 @@
     "worker": "node src/workers/index.js",
     "seed": "node scripts/seed.js",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "bench:api": "node benchmarks/api-load.js",
+    "bench:pipeline": "node benchmarks/document-pipeline.js",
+    "bench:retrieval": "node benchmarks/retrieval-eval.js"
   },
   "keywords": [
     "healthcare",
@@ -43,6 +46,7 @@
     "winston": "^3.8.0"
   },
   "devDependencies": {
+    "autocannon": "^8.0.0",
     "eslint": "^8.40.0",
     "mongodb-memory-server": "^10.4.3",
     "nodemon": "^2.0.22",

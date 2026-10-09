@@ -15,6 +15,7 @@ import chatRoutes from './routes/chatRoutes.js';
 import triageRoutes from './routes/triageRoutes.js';
 import documentRoutes from './routes/documentRoutes.js';
 import adminRoutes from './routes/adminRoutes.js';
+import healthRecordRoutes from './routes/healthRecordRoutes.js';
 
 // Builds the Express app without connecting to the database or listening on
 // a port — so tests can exercise it in memory and index.js can start it.
@@ -70,6 +71,7 @@ export const createApp = () => {
   app.use('/api/triage', triageRoutes);
   app.use('/api/documents', documentRoutes);
   app.use('/api/admin', adminRoutes);
+  app.use('/api/records', healthRecordRoutes);
 
   // Error handling middleware
   app.use((err, req, res, next) => {

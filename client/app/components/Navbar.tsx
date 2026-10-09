@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
-import { clearSession, getUser, type AuthUser } from '../lib/api';
+import { getUser, logout, type AuthUser } from '../lib/api';
 
 export default function Navbar() {
   const router = useRouter();
@@ -16,8 +16,8 @@ export default function Navbar() {
     setUser(getUser());
   }, [pathname]);
 
-  const handleLogout = () => {
-    clearSession();
+  const handleLogout = async () => {
+    await logout();
     setUser(null);
     router.push('/auth/login');
   };

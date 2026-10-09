@@ -1,6 +1,27 @@
 import { User } from '../models/index.js';
 import { generateTokens, verifyRefreshToken } from '../middleware/auth.js';
+import jwt from 'jsonwebtoken';
+import { config } from '../config/index.js';
 import { logger } from '../utils/logger.js';
+
+const cookieOptions = () => ({
+  httpOnly: true, // not readable from JavaScript, so XSS can't steal it
+  secure: config.refreshCookie.secure,
+  sameSite: config.refreshCookie.sameSite,
+  path: config.refreshCookie.path,
+  domain: config.refreshCookie.domain,
+});
+
+// The cookie lives exactly as long as the refresh token inside it.
+export const setRefreshCookie = (res, refreshToken) => {
+  const { exp } = jwt.decode(refreshToken);
+  res.cookie(config.refreshCookie.name, refreshToken, {
+    ...cookieOptions(),
+    maxAge: Math.max(exp * 1000 - Date.now(), 0),
+  });
+};
+
+const clearRefreshCookie = (res) => res.clearCookie(config.refreshCookie.name, cookieOptions());
 
 export const register = async (req, res) => {
   try {
@@ -31,10 +52,10 @@ export const register = async (req, res) => {
 
     logger.info(`User registered: ${email}`);
 
+    setRefreshCookie(res, refreshToken);
     res.status(201).json({
       message: 'User registered successfully',
       token: accessToken,
-      refreshToken,
       user: {
         id: user._id,
         email: user.email,
@@ -74,10 +95,10 @@ export const login = async (req, res) => {
 
     logger.info(`User logged in: ${email}`);
 
+    setRefreshCookie(res, refreshToken);
     res.status(200).json({
       message: 'Login successful',
       token: accessToken,
-      refreshToken,
       user: {
         id: user._id,
         email: user.email,
@@ -93,21 +114,23 @@ export const login = async (req, res) => {
 
 export const refreshToken = async (req, res) => {
   try {
-    const { refreshToken: token } = req.body;
+    const token = req.cookies?.[config.refreshCookie.name];
 
     if (!token) {
-      return res.status(400).json({ message: 'Refresh token is required' });
+      return res.status(401).json({ message: 'Refresh cookie is missing; please log in again' });
     }
 
     // Verify refresh token
     const decoded = verifyRefreshToken(token);
     if (!decoded) {
+      clearRefreshCookie(res);
       return res.status(403).json({ message: 'Invalid or expired refresh token' });
     }
 
     // Look up user to get current role (role can change since the token was issued)
     const user = await User.findById(decoded.userId);
     if (!user || !user.isActive) {
+      clearRefreshCookie(res);
       return res.status(403).json({ message: 'User not found or inactive' });
     }
 
@@ -116,13 +139,22 @@ export const refreshToken = async (req, res) => {
 
     logger.info(`Token refreshed for user: ${user.email}`);
 
+    // Rotate: every refresh replaces the cookie with a fresh refresh token.
+    setRefreshCookie(res, newRefreshToken);
     res.status(200).json({
       message: 'Token refreshed',
       token: accessToken,
-      refreshToken: newRefreshToken,
+      user: { id: user._id, email: user.email, name: user.name, role: user.role },
     });
   } catch (error) {
     logger.error('Token refresh error:', error.message);
     res.status(500).json({ message: 'Token refresh failed' });
   }
+};
+
+// POST /api/auth/logout — drop the refresh cookie. The short-lived access
+// token simply expires.
+export const logout = (req, res) => {
+  clearRefreshCookie(res);
+  res.json({ message: 'Logged out' });
 };

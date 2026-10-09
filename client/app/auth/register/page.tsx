@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { saveSession } from '../../lib/api';
+import { authPost, saveSession } from '../../lib/api';
 
 export default function RegisterPage() {
   const router = useRouter();
@@ -21,16 +21,12 @@ export default function RegisterPage() {
     setError('');
 
     try {
-      const response = await fetch('http://localhost:5000/api/auth/register', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(formData),
-      });
+      const response = await authPost('/api/auth/register', formData);
+      const data = await response.json().catch(() => ({}));
 
-      if (!response.ok) throw new Error('Registration failed');
+      if (!response.ok) throw new Error(data.message || 'Registration failed');
 
-      const data = await response.json();
-      saveSession(data); // stores token, refreshToken and user together
+      saveSession(data); // access token + user; the refresh token is an httpOnly cookie
       router.push('/dashboard');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Registration failed');

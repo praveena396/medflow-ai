@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
+import cookieParser from 'cookie-parser';
 import mongoose from 'mongoose';
 import { config } from './config/index.js';
 import { redis } from './config/redis.js';
@@ -31,6 +32,7 @@ export const createApp = () => {
   app.use(morgan('combined', { stream: { write: (msg) => logger.info(msg.trim()) } }));
   app.use(express.json({ limit: '1mb' }));
   app.use(express.urlencoded({ limit: '1mb', extended: true }));
+  app.use(cookieParser());
 
   // Health Check — reports the real status of every dependency.
   app.get('/health', async (req, res) => {

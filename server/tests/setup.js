@@ -1,8 +1,11 @@
+import { inject } from 'vitest';
+
 // Runs before every test file, BEFORE the app code is imported.
 // dotenv never overwrites variables that are already set, so these values
 // win over anything in .env — keeping tests away from real data/services.
 process.env.NODE_ENV = 'test';
-process.env.MONGO_URI = 'mongodb://localhost:27017/medflow-test';
+// Chosen once in tests/globalSetup.js (MONGO_URI, an in-memory server, or localhost).
+process.env.MONGO_URI = inject('mongoUri');
 process.env.JWT_SECRET = 'test_jwt_secret_0123456789_0123456789_0123456789';
 process.env.JWT_REFRESH_SECRET = 'test_refresh_secret_9876543210_9876543210_98';
 process.env.EMAIL_DRIVER = 'mock';

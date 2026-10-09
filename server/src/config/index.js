@@ -89,12 +89,9 @@ export const config = {
   documents: {
     chunkSizeWords: num(process.env.DOC_CHUNK_SIZE_WORDS, 500),
     chunkOverlapWords: num(process.env.DOC_CHUNK_OVERLAP_WORDS, 50),
-    allowedMimeTypes: [
-      'application/pdf',
-      'text/plain',
-      'image/png',
-      'image/jpeg',
-    ],
+    // PDF and plain text only. Images (PNG/JPEG) need OCR, which isn't built yet,
+    // so they are rejected at upload instead of failing later in the worker.
+    allowedMimeTypes: ['application/pdf', 'text/plain'],
   },
 };
 

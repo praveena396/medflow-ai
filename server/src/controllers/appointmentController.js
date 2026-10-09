@@ -1,6 +1,48 @@
 import { Appointment, User } from '../models/index.js';
 import { enqueueNotification } from '../queues/index.js';
 import { logger } from '../utils/logger.js';
+import { appointmentReminderSms } from '../services/notificationService.js';
+
+// Who may change an appointment: admins may change any; doctors only those
+// assigned to them; patients only their own. req.user comes from the verified JWT.
+export const canModifyAppointment = (user, appointment) => {
+  if (!user) return false;
+  if (user.role === 'admin') return true;
+  if (user.role === 'doctor') return appointment.doctorId?.toString() === user.userId;
+  return appointment.patientId?.toString() === user.userId;
+};
+
+const MS_PER_MINUTE = 60 * 1000;
+const DEFAULT_DURATION_MINUTES = 30;
+
+// Finds a scheduled appointment of this doctor whose time window
+// [dateTime, dateTime + duration) overlaps the requested one. Back-to-back
+// appointments (one ends exactly when the next starts) do not overlap.
+export const findDoctorConflict = async ({ doctorId, dateTime, duration, excludeId }) => {
+  const start = new Date(dateTime);
+  const end = new Date(start.getTime() + duration * MS_PER_MINUTE);
+  const query = {
+    doctorId,
+    status: 'scheduled',
+    dateTime: { $lt: end },
+    $expr: {
+      $gt: [
+        {
+          $add: [
+            '$dateTime',
+            { $multiply: [{ $ifNull: ['$duration', DEFAULT_DURATION_MINUTES] }, MS_PER_MINUTE] },
+          ],
+        },
+        start,
+      ],
+    },
+  };
+  if (excludeId) query._id = { $ne: excludeId };
+  return Appointment.findOne(query).select('_id dateTime duration');
+};
+
+const conflictResponse = (res) =>
+  res.status(409).json({ message: 'The doctor already has an appointment at that time' });
 
 // List doctors available for booking (patients need this to create an appointment)
 export const getDoctors = async (req, res) => {
@@ -32,11 +74,19 @@ export const getAppointments = async (req, res) => {
 
 export const createAppointment = async (req, res) => {
   try {
-    const { doctorId, dateTime, reason, duration = 30 } = req.body;
+    const { doctorId, dateTime, reason, duration = DEFAULT_DURATION_MINUTES } = req.body;
     const { userId } = req.user;
 
     if (!doctorId || !dateTime || !reason) {
       return res.status(400).json({ message: 'doctorId, dateTime, and reason are required' });
+    }
+    if (Number.isNaN(new Date(dateTime).getTime())) {
+      return res.status(400).json({ message: 'dateTime must be a valid date' });
+    }
+
+    // No double-booking: the doctor must be free for the whole slot.
+    if (await findDoctorConflict({ doctorId, dateTime, duration })) {
+      return conflictResponse(res);
     }
 
     const appointment = new Appointment({
@@ -48,13 +98,15 @@ export const createAppointment = async (req, res) => {
     });
 
     await appointment.save();
-    await appointment.populate('patientId doctorId', 'name email');
+    await appointment.populate('patientId', 'name email phone');
+    await appointment.populate('doctorId', 'name email');
 
     logger.info(`Appointment created: ${appointment._id}`);
 
     // Queue confirmation email now, and a reminder 24h before the appointment
-    // (1h before if it is sooner than 24h away). Failures here must not
-    // break the booking itself.
+    // (1h before if it is sooner than 24h away). Patients with a phone number
+    // also get the reminder by SMS (SMS_DRIVER=mock logs it instead of sending).
+    // Failures here must not break the booking itself.
     try {
       const details = {
         patientName: appointment.patientId.name,
@@ -85,6 +137,17 @@ export const createAppointment = async (req, res) => {
           },
           { delayMs: reminderDelay }
         );
+
+        if (appointment.patientId.phone) {
+          await enqueueNotification(
+            {
+              type: 'sms',
+              phoneNumber: appointment.patientId.phone,
+              message: appointmentReminderSms(details),
+            },
+            { delayMs: reminderDelay }
+          );
+        }
       }
     } catch (notifyError) {
       logger.error('Failed to queue appointment notifications:', notifyError.message);
@@ -105,15 +168,37 @@ export const updateAppointment = async (req, res) => {
     const { id } = req.params;
     const { dateTime, reason, status } = req.body;
 
-    const appointment = await Appointment.findByIdAndUpdate(
-      id,
-      { dateTime, reason, status },
-      { new: true }
-    );
-
+    const appointment = await Appointment.findById(id);
     if (!appointment) {
       return res.status(404).json({ message: 'Appointment not found' });
     }
+    if (!canModifyAppointment(req.user, appointment)) {
+      return res.status(403).json({ message: 'You can only change your own appointments' });
+    }
+
+    if (dateTime !== undefined) {
+      if (Number.isNaN(new Date(dateTime).getTime())) {
+        return res.status(400).json({ message: 'dateTime must be a valid date' });
+      }
+      appointment.dateTime = dateTime;
+    }
+    if (reason !== undefined) appointment.reason = reason;
+    if (status !== undefined) appointment.status = status;
+
+    // A rescheduled (or re-activated) appointment must not overlap another
+    // scheduled appointment of the same doctor. It never conflicts with itself.
+    const timeOrStatusChanged = dateTime !== undefined || status !== undefined;
+    if (timeOrStatusChanged && appointment.status === 'scheduled') {
+      const conflict = await findDoctorConflict({
+        doctorId: appointment.doctorId,
+        dateTime: appointment.dateTime,
+        duration: appointment.duration || DEFAULT_DURATION_MINUTES,
+        excludeId: appointment._id,
+      });
+      if (conflict) return conflictResponse(res);
+    }
+
+    await appointment.save();
 
     logger.info(`Appointment updated: ${id}`);
 
@@ -131,15 +216,16 @@ export const cancelAppointment = async (req, res) => {
   try {
     const { id } = req.params;
 
-    const appointment = await Appointment.findByIdAndUpdate(
-      id,
-      { status: 'cancelled' },
-      { new: true }
-    );
-
+    const appointment = await Appointment.findById(id);
     if (!appointment) {
       return res.status(404).json({ message: 'Appointment not found' });
     }
+    if (!canModifyAppointment(req.user, appointment)) {
+      return res.status(403).json({ message: 'You can only cancel your own appointments' });
+    }
+
+    appointment.status = 'cancelled';
+    await appointment.save();
 
     logger.info(`Appointment cancelled: ${id}`);
 

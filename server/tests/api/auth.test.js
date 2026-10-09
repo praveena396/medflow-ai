@@ -39,6 +39,19 @@ describe('POST /api/auth/register', () => {
     expect(res.body.user.role).toBe('patient');
   });
 
+  it('stores an optional phone number for SMS reminders', async () => {
+    const { User } = await import('../../src/models/index.js');
+    const res = await request(app).post('/api/auth/register').send({
+      name: 'Phone User',
+      email: 'phone@medflow.test',
+      password: 'Secret@123',
+      phone: '+15715550123',
+    });
+    expect(res.status).toBe(201);
+    const stored = await User.findOne({ email: 'phone@medflow.test' });
+    expect(stored.phone).toBe('+15715550123');
+  });
+
   it('rejects a duplicate email', async () => {
     const res = await request(app).post('/api/auth/register').send({
       name: 'Alice Again',
@@ -51,6 +64,20 @@ describe('POST /api/auth/register', () => {
   it('rejects missing fields', async () => {
     const res = await request(app).post('/api/auth/register').send({ email: 'x@y.test' });
     expect(res.status).toBe(400);
+  });
+
+  it('rejects an invalid email or a short password', async () => {
+    const badEmail = await request(app)
+      .post('/api/auth/register')
+      .send({ name: 'Bob', email: 'bob-at-medflow', password: 'Secret@123' });
+    expect(badEmail.status).toBe(400);
+    expect(badEmail.body.errors[0].field).toBe('email');
+
+    const shortPassword = await request(app)
+      .post('/api/auth/register')
+      .send({ name: 'Bob', email: 'bob@medflow.test', password: 'abc' });
+    expect(shortPassword.status).toBe(400);
+    expect(shortPassword.body.errors[0].field).toBe('password');
   });
 });
 
@@ -68,6 +95,13 @@ describe('POST /api/auth/login', () => {
       .post('/api/auth/login')
       .send({ email: 'alice@medflow.test', password: 'WrongPassword1' });
     expect(res.status).toBe(401);
+  });
+
+  it('matches the email case-insensitively', async () => {
+    const res = await request(app)
+      .post('/api/auth/login')
+      .send({ email: 'Alice@MedFlow.test', password: 'Secret@123' });
+    expect(res.status).toBe(200);
   });
 
   it('rejects an unknown email', async () => {

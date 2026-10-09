@@ -54,6 +54,8 @@ export const sendMessage = async (req, res) => {
         text: ragResponse.message,
         sourceDocuments: ragResponse.sourceDocuments,
         confidence: ragResponse.confidence,
+        // true when nothing in the patient's documents was similar enough to answer from
+        declined: ragResponse.declined === true,
       },
     });
   } catch (error) {

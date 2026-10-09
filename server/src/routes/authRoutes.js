@@ -1,12 +1,13 @@
 import express from 'express';
 import { register, login, refreshToken } from '../controllers/authController.js';
 import { authenticateToken } from '../middleware/auth.js';
+import { validateRegister, validateLogin } from '../validators/authValidators.js';
 
 const router = express.Router();
 
 // Public routes
-router.post('/register', register);
-router.post('/login', login);
+router.post('/register', validateRegister, register);
+router.post('/login', validateLogin, login);
 router.post('/refresh', refreshToken);
 
 // Protected route (example)

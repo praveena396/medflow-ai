@@ -10,3 +10,6 @@ build/
 chroma_data/
 uploads/
 .env.*.local
+
+# Benchmark output (see benchmarks/; numbers come from running the scripts)
+benchmarks/results/

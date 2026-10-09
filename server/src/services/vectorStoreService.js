@@ -3,7 +3,7 @@ import { embeddingsService } from './embeddingsService.js';
 import { logger } from '../utils/logger.js';
 
 // cosine similarity: 1 = same meaning, 0 = unrelated
-const cosineSimilarity = (a, b) => {
+export const cosineSimilarity = (a, b) => {
   let dot = 0;
   let normA = 0;
   let normB = 0;

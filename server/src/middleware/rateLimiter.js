@@ -29,3 +29,25 @@ export const authLimiter = rateLimit({
   store: redisStore('rl:auth:'),
   message: { message: 'Too many attempts, please try again later' },
 });
+
+// Per-user limit for routes that call the LLM. Must run after
+// authenticateToken: the key is the user id from the verified JWT, so one
+// user can't exhaust the limit for everyone behind the same IP, and one user
+// can't dodge it by switching IPs.
+export const createUserRateLimiter = ({
+  windowMs = config.rateLimit.aiWindowMs,
+  max = config.rateLimit.aiMax,
+  prefix,
+}) =>
+  rateLimit({
+    windowMs,
+    max,
+    standardHeaders: true,
+    legacyHeaders: false,
+    keyGenerator: (req) => `user:${req.user.userId}`,
+    store: redisStore(prefix),
+    message: { message: 'Too many AI requests. Please wait a minute and try again.' },
+  });
+
+export const chatLimiter = createUserRateLimiter({ prefix: 'rl:chat:' });
+export const triageLimiter = createUserRateLimiter({ prefix: 'rl:triage:' });

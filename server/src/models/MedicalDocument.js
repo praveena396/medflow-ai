@@ -24,7 +24,12 @@ const medicalDocumentSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
     },
-    extractedText: String, // OCR extracted text
+    extractedText: String, // text from the PDF text layer, the .txt file, or OCR
+    extractionMethod: {
+      type: String,
+      enum: ['pdf-text', 'text', 'ocr'],
+    },
+    ocrConfidence: Number, // tesseract mean confidence, 0-100 (images only)
     summary: String, // AI-generated summary
     uploadDate: {
       type: Date,

@@ -92,6 +92,20 @@ const s3Driver = {
     );
   },
 
+  // A short-lived link the browser can fetch directly from S3; the app never
+  // proxies the bytes and the bucket can stay private.
+  async getDownloadUrl(fileName, subfolder, { expiresIn, downloadName, contentType }) {
+    const { s3Client, GetObjectCommand } = await getS3();
+    const { getSignedUrl } = await import('@aws-sdk/s3-request-presigner');
+    const command = new GetObjectCommand({
+      Bucket: config.storage.s3.bucket,
+      Key: `${subfolder}/${fileName}`,
+      ResponseContentDisposition: contentDisposition(downloadName),
+      ...(contentType && { ResponseContentType: contentType }),
+    });
+    return getSignedUrl(s3Client, command, { expiresIn });
+  },
+
   async get(fileName, subfolder) {
     const { s3Client, GetObjectCommand } = await getS3();
     const response = await s3Client.send(
@@ -104,14 +118,23 @@ const s3Driver = {
   },
 };
 
-const driver = config.storage.driver === 's3' ? s3Driver : localDriver;
+// Chosen per call (not at import) so the driver follows the current config.
+const getDriver = () => (config.storage.driver === 's3' ? s3Driver : localDriver);
+
+// Stored names are "<timestamp>_<original name>"; downloads use the original.
+export const originalFileName = (storedName) => String(storedName).replace(/^\d+_/, '');
+
+// Only safe characters in the header value, so a crafted file name can't
+// inject headers or break the quoting.
+export const contentDisposition = (fileName) =>
+  `attachment; filename="${String(fileName || 'download').replace(/[^\w.\- ()]/g, '_').slice(0, 150)}"`;
 
 // ---------- public API (same shape the rest of the app already uses) ----------
 export const uploadFile = async (file, subfolder = 'documents') => {
   try {
     if (!file) throw new Error('No file provided');
 
-    const stored = await driver.upload(file, subfolder);
+    const stored = await getDriver().upload(file, subfolder);
     logger.info(`File uploaded via ${config.storage.driver} driver: ${stored.fileName}`);
 
     return {
@@ -129,7 +152,7 @@ export const uploadFile = async (file, subfolder = 'documents') => {
 
 export const deleteFile = async (fileName, subfolder = 'documents') => {
   try {
-    await driver.delete(fileName, subfolder);
+    await getDriver().delete(fileName, subfolder);
     logger.info(`File deleted: ${fileName}`);
     return { success: true, message: 'File deleted successfully' };
   } catch (error) {
@@ -140,10 +163,30 @@ export const deleteFile = async (fileName, subfolder = 'documents') => {
 
 export const getFile = async (fileName, subfolder = 'documents') => {
   try {
-    const data = await driver.get(fileName, subfolder);
+    const data = await getDriver().get(fileName, subfolder);
     return { success: true, data, fileName };
   } catch (error) {
     logger.error('File read error:', error.message);
+    return { success: false, error: error.message };
+  }
+};
+
+// Download link for a stored file. With the S3 driver this is a pre-signed
+// URL valid for config.storage.downloadUrlExpirySeconds (15 minutes by
+// default). Local storage has no public URL: callers stream the file through
+// an authenticated route instead ({ local: true }).
+export const getDownloadUrl = async (fileName, { subfolder = 'documents', contentType } = {}) => {
+  if (config.storage.driver !== 's3') return { success: true, local: true };
+  try {
+    const expiresIn = config.storage.downloadUrlExpirySeconds;
+    const url = await s3Driver.getDownloadUrl(fileName, subfolder, {
+      expiresIn,
+      downloadName: originalFileName(fileName),
+      contentType,
+    });
+    return { success: true, url, expiresIn };
+  } catch (error) {
+    logger.error('Pre-signed URL error:', error.message);
     return { success: false, error: error.message };
   }
 };

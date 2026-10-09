@@ -24,7 +24,8 @@ const pageLines = (pageNumber, linesPerPage) => {
   return lines;
 };
 
-export const buildSamplePdf = ({ pages = 20, linesPerPage = 40 } = {}) => {
+// blank: true writes pages with no text at all, like a scanned document.
+export const buildSamplePdf = ({ pages = 20, linesPerPage = 40, blank = false } = {}) => {
   if (!Number.isInteger(pages) || pages < 1) throw new Error('pages must be a positive integer');
 
   // Object numbers: 1 catalog, 2 page tree, 3 font, then (page, content) pairs.
@@ -41,7 +42,7 @@ export const buildSamplePdf = ({ pages = 20, linesPerPage = 40 } = {}) => {
     const textOps = pageLines(p + 1, linesPerPage)
       .map((line, i) => `${i === 0 ? '' : '0 -18 Td '}(${escapePdfText(line)}) Tj`)
       .join('\n');
-    const stream = `BT\n/F1 10 Tf\n50 760 Td\n${textOps}\nET`;
+    const stream = blank ? '' : `BT\n/F1 10 Tf\n50 760 Td\n${textOps}\nET`;
 
     objects[pageId] =
       '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] ' +

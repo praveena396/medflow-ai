@@ -1,6 +1,10 @@
 import mongoose from 'mongoose';
-import { User, Appointment, Triage, MedicalDocument } from '../models/index.js';
+import { User, Appointment, Triage, MedicalDocument, AuditLog } from '../models/index.js';
+import { recordAudit, diffFields } from '../services/auditService.js';
 import { logger } from '../utils/logger.js';
+
+// Treat user input as literal text inside a regular expression.
+const escapeRegex = (text) => String(text).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 // Build a createdAt date-range filter from ?from=YYYY-MM-DD&to=YYYY-MM-DD.
 const dateRange = (from, to, field = 'createdAt') => {
@@ -79,11 +83,12 @@ export const getAppointmentQueue = async (req, res) => {
 export const getUsers = async (req, res) => {
   try {
     const { search } = req.query;
-    const filter = search
+    const pattern = search ? escapeRegex(search) : null;
+    const filter = pattern
       ? {
           $or: [
-            { name: { $regex: search, $options: 'i' } },
-            { email: { $regex: search, $options: 'i' } },
+            { name: { $regex: pattern, $options: 'i' } },
+            { email: { $regex: pattern, $options: 'i' } },
           ],
         }
       : {};
@@ -127,11 +132,93 @@ export const exportAppointments = async (req, res) => {
       ].join(',')
     );
 
+    await recordAudit({
+      req,
+      action: 'admin.export.appointments',
+      targetType: 'appointment',
+      details: { from, to, rows: appointments.length },
+    });
+
     res.setHeader('Content-Type', 'text/csv');
     res.setHeader('Content-Disposition', 'attachment; filename="appointments.csv"');
     res.send([header, ...rows].join('\n'));
   } catch (error) {
     logger.error('Admin export error:', error.message);
     res.status(500).json({ message: 'Failed to export appointments' });
+  }
+};
+
+// PATCH /api/admin/users/:id — activate/deactivate an account or change its role.
+export const updateUser = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { role, isActive } = req.body;
+
+    if (id === req.user.userId && (role !== undefined || isActive === false)) {
+      return res.status(400).json({ message: "You can't change your own role or deactivate yourself" });
+    }
+
+    const user = await User.findById(id);
+    if (!user) return res.status(404).json({ message: 'User not found' });
+
+    const before = { role: user.role, isActive: user.isActive };
+    if (role !== undefined) user.role = role;
+    if (isActive !== undefined) user.isActive = isActive;
+    await user.save();
+
+    const changes = diffFields(before, user, ['role', 'isActive']);
+    if (Object.keys(changes).length > 0) {
+      await recordAudit({
+        req,
+        action: 'admin.user.update',
+        targetType: 'user',
+        targetId: user._id,
+        details: { email: user.email, changes },
+      });
+    }
+
+    res.json({
+      message: 'User updated',
+      user: { _id: user._id, name: user.name, email: user.email, role: user.role, isActive: user.isActive },
+    });
+  } catch (error) {
+    logger.error('Admin update user error:', error.message);
+    res.status(500).json({ message: 'Failed to update user' });
+  }
+};
+
+// GET /api/admin/audit — read the append-only audit log, newest first.
+// Filters: action (exact, or a prefix ending in *, e.g. ai.*), actorId,
+// targetType, targetId, from/to (dates), page, limit.
+export const getAuditLog = async (req, res) => {
+  try {
+    const { action, actorId, targetType, targetId, from, to } = req.query;
+    const page = req.query.page || 1;
+    const limit = req.query.limit || 50;
+
+    const filter = { ...dateRange(from, to) };
+    if (action) {
+      filter.action = action.endsWith('*')
+        ? { $regex: `^${escapeRegex(action.slice(0, -1))}` }
+        : action;
+    }
+    if (actorId) filter.actorId = actorId;
+    if (targetType) filter.targetType = targetType;
+    if (targetId) filter.targetId = targetId;
+
+    const [entries, total] = await Promise.all([
+      AuditLog.find(filter)
+        .populate('actorId', 'name email role')
+        .sort({ createdAt: -1, _id: -1 })
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .lean(),
+      AuditLog.countDocuments(filter),
+    ]);
+
+    res.json({ entries, total, page, limit });
+  } catch (error) {
+    logger.error('Admin audit log error:', error.message);
+    res.status(500).json({ message: 'Failed to fetch audit log' });
   }
 };

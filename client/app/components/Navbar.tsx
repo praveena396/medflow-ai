@@ -1,24 +1,17 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useState } from 'react';
-import { usePathname, useRouter } from 'next/navigation';
-import { clearSession, getUser, type AuthUser } from '../lib/api';
+import { useRouter } from 'next/navigation';
+import { logout } from '../lib/api';
+import { useSession } from '../lib/useRequireAuth';
 
 export default function Navbar() {
   const router = useRouter();
-  const pathname = usePathname();
-  const [user, setUser] = useState<AuthUser | null>(null);
+  // Re-renders on login, logout and token refresh (and in other tabs).
+  const user = useSession();
 
-  // Read the saved login after mount (localStorage doesn't exist during
-  // server rendering). Re-check on navigation so login/logout updates the bar.
-  useEffect(() => {
-    setUser(getUser());
-  }, [pathname]);
-
-  const handleLogout = () => {
-    clearSession();
-    setUser(null);
+  const handleLogout = async () => {
+    await logout();
     router.push('/auth/login');
   };
 
@@ -36,8 +29,14 @@ export default function Navbar() {
                 <Link href="/triage" className="hover:text-blue-200">Triage</Link>
                 <Link href="/appointments" className="hover:text-blue-200">Appointments</Link>
                 <Link href="/documents" className="hover:text-blue-200">Documents</Link>
+                <Link href="/records" className="hover:text-blue-200">
+                  {user.role === 'patient' ? 'My Record' : 'Records'}
+                </Link>
                 {user.role === 'admin' && (
-                  <Link href="/admin" className="hover:text-blue-200 font-bold">Admin</Link>
+                  <>
+                    <Link href="/admin" className="hover:text-blue-200 font-bold">Admin</Link>
+                    <Link href="/admin/audit" className="hover:text-blue-200 font-bold">Audit Log</Link>
+                  </>
                 )}
                 <span className="text-blue-200 hidden sm:inline">Hi, {user.name}</span>
                 <button
@@ -48,7 +47,7 @@ export default function Navbar() {
                 </button>
               </>
             )}
-            {!user && (
+            {user === null && (
               <Link href="/auth/login" className="bg-white text-blue-600 px-4 py-2 rounded">
                 Login
               </Link>

@@ -31,10 +31,17 @@ export const registerUser = async (app, overrides = {}) => {
   if (res.status !== 201) {
     throw new Error(`Test user registration failed: ${JSON.stringify(res.body)}`);
   }
-  return { ...res.body, credentials: body };
+  return { ...res.body, refreshCookie: refreshCookieFrom(res), credentials: body };
 };
 
 export const authHeader = (token) => ({ Authorization: `Bearer ${token}` });
+
+// The refresh token comes back only as an httpOnly cookie. Returns the
+// "name=value" pair to send back in a Cookie header, or undefined.
+export const refreshCookieFrom = (res) =>
+  (res.headers['set-cookie'] || [])
+    .find((cookie) => cookie.startsWith('medflow_rt='))
+    ?.split(';')[0];
 
 // Create a doctor/admin directly in the database (public registration is
 // patient-only by design), then log in through the real API.
@@ -54,5 +61,5 @@ export const createStaffUser = async (app, role) => {
   if (res.status !== 200) {
     throw new Error(`Staff login failed: ${JSON.stringify(res.body)}`);
   }
-  return { ...res.body, userId: user._id.toString(), credentials };
+  return { ...res.body, refreshCookie: refreshCookieFrom(res), userId: user._id.toString(), credentials };
 };

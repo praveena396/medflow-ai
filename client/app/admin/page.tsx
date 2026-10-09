@@ -1,7 +1,8 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
-import { apiFetch, apiJson } from '../lib/api';
+import Link from 'next/link';
+import { useEffect, useState } from 'react';
+import { API_BASE, apiFetch, apiJson, errorMessage } from '../lib/api';
 import { useRequireAuth } from '../lib/useRequireAuth';
 
 interface Stats {
@@ -55,45 +56,56 @@ export default function AdminDashboardPage() {
 
   const rangeQuery = from || to ? `?from=${from}&to=${to}` : '';
 
-  const loadAll = useCallback(async () => {
-    try {
-      setError('');
-      const [statsData, queueData, healthRes] = await Promise.all([
-        apiJson<Stats>(`/api/admin/stats${rangeQuery}`),
-        apiJson<{ appointments: QueueItem[] }>(`/api/admin/appointments${rangeQuery}`),
-        fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000'}/health`).then(
-          (r) => r.json()
-        ),
-      ]);
-      setStats(statsData);
-      setQueue(queueData.appointments);
-      setHealth(healthRes);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load dashboard');
-    }
-  }, [rangeQuery]);
-
-  const loadUsers = useCallback(async () => {
-    try {
-      const data = await apiJson<{ users: AdminUser[] }>(
-        `/api/admin/users${search ? `?search=${encodeURIComponent(search)}` : ''}`
-      );
-      setUsers(data.users);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load users');
-    }
-  }, [search]);
-
   useEffect(() => {
-    if (user) loadAll();
-  }, [user, loadAll]);
+    if (!user) return;
+    let active = true;
+    Promise.all([
+      apiJson<Stats>(`/api/admin/stats${rangeQuery}`),
+      apiJson<{ appointments: QueueItem[] }>(`/api/admin/appointments${rangeQuery}`),
+      fetch(`${API_BASE}/health`).then((r) => r.json() as Promise<Health>),
+    ])
+      .then(([statsData, queueData, healthData]) => {
+        if (!active) return;
+        setError('');
+        setStats(statsData);
+        setQueue(queueData.appointments);
+        setHealth(healthData);
+      })
+      .catch((err) => active && setError(errorMessage(err, 'Failed to load dashboard')));
+    return () => {
+      active = false;
+    };
+  }, [user, rangeQuery]);
 
   // Debounce the user search: wait 400ms after typing stops before asking the server.
   useEffect(() => {
     if (!user) return;
-    const timer = setTimeout(loadUsers, 400);
-    return () => clearTimeout(timer);
-  }, [user, loadUsers]);
+    let active = true;
+    const timer = setTimeout(() => {
+      apiJson<{ users: AdminUser[] }>(`/api/admin/users${search ? `?search=${encodeURIComponent(search)}` : ''}`)
+        .then((data) => active && setUsers(data.users))
+        .catch((err) => active && setError(errorMessage(err, 'Failed to load users')));
+    }, 400);
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
+  }, [user, search]);
+
+  // Activate/deactivate an account (recorded in the audit log).
+  const toggleActive = async (target: AdminUser) => {
+    const verb = target.isActive ? 'Deactivate' : 'Reactivate';
+    if (!window.confirm(`${verb} ${target.name} (${target.email})?`)) return;
+    try {
+      const data = await apiJson<{ user: AdminUser }>(`/api/admin/users/${target._id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ isActive: !target.isActive }),
+      });
+      setUsers((prev) => prev.map((u) => (u._id === target._id ? { ...u, isActive: data.user.isActive } : u)));
+    } catch (err) {
+      setError(errorMessage(err, 'Failed to update user'));
+    }
+  };
 
   const downloadCsv = async () => {
     try {
@@ -107,7 +119,7 @@ export default function AdminDashboardPage() {
       link.click();
       URL.revokeObjectURL(url);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Export failed');
+      setError(errorMessage(err, 'Export failed'));
     }
   };
 
@@ -127,6 +139,9 @@ export default function AdminDashboardPage() {
             <button onClick={downloadCsv} className="bg-blue-600 text-white px-4 py-2 rounded font-bold hover:bg-blue-700">
               ⬇ Export CSV
             </button>
+            <Link href="/admin/audit" className="border border-blue-600 text-blue-600 px-4 py-2 rounded font-bold hover:bg-blue-50">
+              Audit log
+            </Link>
           </div>
         </div>
 
@@ -220,7 +235,9 @@ export default function AdminDashboardPage() {
                 <th className="py-2 pr-4">Name</th>
                 <th className="py-2 pr-4">Email</th>
                 <th className="py-2 pr-4">Role</th>
-                <th className="py-2">Joined</th>
+                <th className="py-2 pr-4">Joined</th>
+                <th className="py-2 pr-4">Status</th>
+                <th className="py-2"></th>
               </tr>
             </thead>
             <tbody>
@@ -235,7 +252,19 @@ export default function AdminDashboardPage() {
                       : 'bg-gray-100 text-gray-800'
                     }`}>{u.role}</span>
                   </td>
-                  <td className="py-2">{new Date(u.createdAt).toLocaleDateString()}</td>
+                  <td className="py-2 pr-4">{new Date(u.createdAt).toLocaleDateString()}</td>
+                  <td className="py-2 pr-4">
+                    <span className={u.isActive ? 'text-green-700' : 'text-red-700 font-bold'}>
+                      {u.isActive ? 'active' : 'deactivated'}
+                    </span>
+                  </td>
+                  <td className="py-2 text-right">
+                    {u._id !== user.id && (
+                      <button onClick={() => toggleActive(u)} className="text-sm text-blue-600 hover:underline">
+                        {u.isActive ? 'Deactivate' : 'Reactivate'}
+                      </button>
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>

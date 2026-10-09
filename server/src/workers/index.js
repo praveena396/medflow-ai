@@ -3,6 +3,7 @@ import { validateEnv } from '../config/validateEnv.js';
 import { logger } from '../utils/logger.js';
 import { startDocumentWorker } from './documentWorker.js';
 import { startNotificationWorker } from './notificationWorker.js';
+import { shutdownOcr } from '../services/ocrService.js';
 
 // Standalone worker process: `npm run worker`
 // Runs alongside the API server and consumes background jobs from Redis.
@@ -15,6 +16,7 @@ const main = async () => {
   const shutdown = async (signal) => {
     logger.info(`${signal} received — shutting down workers gracefully`);
     await Promise.all(workers.map((worker) => worker.close()));
+    await shutdownOcr();
     await disconnectDB();
     process.exit(0);
   };

@@ -29,6 +29,18 @@ export default function DashboardPage() {
             <p className="text-gray-600 mb-4">Book and manage your appointments</p>
             <a href="/appointments" className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">View Appointments</a>
           </div>
+
+          <div className="bg-white p-6 rounded-lg shadow">
+            <h3 className="text-xl font-bold mb-2">🩺 Health Record</h3>
+            <p className="text-gray-600 mb-4">Allergies, medications, visits and linked documents</p>
+            <a href="/records" className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">Open Record</a>
+          </div>
+
+          <div className="bg-white p-6 rounded-lg shadow">
+            <h3 className="text-xl font-bold mb-2">📄 Documents</h3>
+            <p className="text-gray-600 mb-4">Upload reports, or photos of lab results and prescriptions</p>
+            <a href="/documents" className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">Manage Documents</a>
+          </div>
         </div>
 
         <div className="bg-white p-6 rounded-lg shadow">

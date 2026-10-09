@@ -1,5 +1,13 @@
 import { MedicalDocument } from '../models/index.js';
-import { uploadFile, deleteFile } from '../services/storageService.js';
+import {
+  uploadFile,
+  deleteFile,
+  getFile,
+  getDownloadUrl,
+  originalFileName,
+  contentDisposition,
+} from '../services/storageService.js';
+import { recordAccess } from '../services/healthRecordService.js';
 import { vectorStore } from '../services/vectorStoreService.js';
 import { enqueueDocumentProcessing } from '../queues/index.js';
 import { logger } from '../utils/logger.js';
@@ -113,5 +121,58 @@ export const deleteDocument = async (req, res) => {
   } catch (error) {
     logger.error('Delete document error:', error.message);
     res.status(500).json({ message: 'Failed to delete document' });
+  }
+};
+
+// The patient, their doctors and admins may open a document (the same rule
+// as the health record that links it).
+const findReadableDocument = async (req) => {
+  const document = await MedicalDocument.findById(req.params.id);
+  if (!document) return { status: 404 };
+  const access = await recordAccess(req.user, document.patientId);
+  return access.read ? { document } : { status: 404 }; // don't reveal that it exists
+};
+
+// GET /api/documents/:id/download — where to fetch the file from.
+// S3: a pre-signed URL that expires in 15 minutes. Local storage: the
+// authenticated /file route below.
+export const getDocumentDownload = async (req, res) => {
+  try {
+    const { document, status } = await findReadableDocument(req);
+    if (!document) return res.status(status).json({ message: 'Document not found' });
+
+    const link = await getDownloadUrl(document.fileName, { contentType: document.mimeType });
+    if (!link.success) return res.status(502).json({ message: 'Could not create a download link' });
+
+    if (link.local) {
+      return res.json({ mode: 'local', url: `/api/documents/${document._id}/file` });
+    }
+    res.json({ mode: 's3', url: link.url, expiresIn: link.expiresIn });
+  } catch (error) {
+    logger.error('Document download link error:', error.message);
+    res.status(500).json({ message: 'Failed to create download link' });
+  }
+};
+
+// GET /api/documents/:id/file — the file itself, through the API (local
+// storage). With S3 it redirects to a fresh pre-signed URL instead.
+export const streamDocumentFile = async (req, res) => {
+  try {
+    const { document, status } = await findReadableDocument(req);
+    if (!document) return res.status(status).json({ message: 'Document not found' });
+
+    const link = await getDownloadUrl(document.fileName, { contentType: document.mimeType });
+    if (link.success && !link.local) return res.redirect(302, link.url);
+
+    const file = await getFile(document.fileName);
+    if (!file.success) return res.status(404).json({ message: 'File is missing from storage' });
+
+    res.setHeader('Content-Type', document.mimeType || 'application/octet-stream');
+    res.setHeader('Content-Disposition', contentDisposition(originalFileName(document.fileName)));
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.send(file.data);
+  } catch (error) {
+    logger.error('Document stream error:', error.message);
+    res.status(500).json({ message: 'Failed to read document' });
   }
 };

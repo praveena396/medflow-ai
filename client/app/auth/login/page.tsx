@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { saveSession } from '../../lib/api';
+import { authPost, saveSession } from '../../lib/api';
 
 export default function LoginPage() {
   const router = useRouter();
@@ -21,16 +21,12 @@ export default function LoginPage() {
     setError('');
 
     try {
-      const response = await fetch('http://localhost:5000/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(formData),
-      });
+      const response = await authPost('/api/auth/login', formData);
+      const data = await response.json().catch(() => ({}));
 
-      if (!response.ok) throw new Error('Login failed');
+      if (!response.ok) throw new Error(data.message || 'Login failed');
 
-      const data = await response.json();
-      saveSession(data); // stores token, refreshToken and user together
+      saveSession(data); // access token + user; the refresh token is an httpOnly cookie
       router.push('/dashboard');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Login failed');
@@ -55,7 +51,7 @@ export default function LoginPage() {
           </div>
           <button type="submit" disabled={loading} className="w-full bg-blue-600 text-white py-2 rounded font-bold hover:bg-blue-700">{loading ? 'Logging in...' : 'Login'}</button>
         </form>
-        <p className="mt-4 text-center"><Link href="/auth/register" className="text-blue-600 hover:underline">Don't have account? Register</Link></p>
+        <p className="mt-4 text-center"><Link href="/auth/register" className="text-blue-600 hover:underline">Don&apos;t have an account? Register</Link></p>
       </div>
     </div>
   );

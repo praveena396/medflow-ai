@@ -5,27 +5,47 @@
 import { chunkText } from '../../src/utils/textChunker.js';
 import { cosineSimilarity } from '../../src/services/vectorStoreService.js';
 
+// An index answers "which chunks are most similar to this text?". The default
+// one keeps embeddings in memory and ranks them with the app's cosine
+// similarity, exactly like the MongoDB vector store. benchmarks/lib/chromaIndex.js
+// runs the same evaluation through the app's ChromaDB driver instead.
+//   add({ documentId, chunkIndex, text }) -> Promise
+//   search(text, topK) -> Promise<[{ documentId, score }]>, best first
+export const createMemoryIndex = (embed) => {
+  const chunks = [];
+  return {
+    name: 'memory (same ranking as VECTOR_STORE=mongo)',
+    async add({ documentId, text }) {
+      chunks.push({ documentId, embedding: await embed(text) });
+    },
+    async search(text, topK) {
+      const queryEmbedding = await embed(text);
+      return chunks
+        .map((chunk) => ({ documentId: chunk.documentId, score: cosineSimilarity(queryEmbedding, chunk.embedding) }))
+        .sort((a, b) => b.score - a.score)
+        .slice(0, topK);
+    },
+  };
+};
+
 // documents: [{ id, text }]
 // queries:   [{ question, expected: documentId | null }]  (null = not answerable)
-// embed:     async (text) => number[]
-export const evaluateRetrieval = async ({ documents, queries, embed, topK = 4, threshold }) => {
-  const chunks = [];
+// embed:     async (text) => number[]   (used by the default in-memory index)
+// index:     optional; see createMemoryIndex
+export const evaluateRetrieval = async ({ documents, queries, embed, topK = 4, threshold, index }) => {
+  const store = index || createMemoryIndex(embed);
+  let chunkCount = 0;
   for (const doc of documents) {
-    for (const text of chunkText(doc.text)) {
-      chunks.push({ documentId: doc.id, embedding: await embed(text) });
+    const pieces = chunkText(doc.text);
+    for (let chunkIndex = 0; chunkIndex < pieces.length; chunkIndex++) {
+      await store.add({ documentId: doc.id, chunkIndex, text: pieces[chunkIndex] });
+      chunkCount++;
     }
   }
 
   const perQuery = [];
   for (const query of queries) {
-    const queryEmbedding = await embed(query.question);
-    const ranked = chunks
-      .map((chunk) => ({
-        documentId: chunk.documentId,
-        score: cosineSimilarity(queryEmbedding, chunk.embedding),
-      }))
-      .sort((a, b) => b.score - a.score)
-      .slice(0, topK);
+    const ranked = await store.search(query.question, topK);
 
     const bestScore = ranked[0]?.score ?? 0;
     const rank = query.expected
@@ -50,7 +70,7 @@ export const evaluateRetrieval = async ({ documents, queries, embed, topK = 4, t
     topK,
     threshold,
     documents: documents.length,
-    chunks: chunks.length,
+    chunks: chunkCount,
     answerableQueries: answerable.length,
     unanswerableQueries: unanswerable.length,
     // Share of answerable questions whose source document was retrieved at all / first.

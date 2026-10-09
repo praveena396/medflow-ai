@@ -99,3 +99,43 @@ describe.skipIf(!CHROMA_URL)('ChromaDB vector store (real server)', () => {
     expect(bob.results[0].text).toContain('swelling');
   });
 });
+
+describe.skipIf(!CHROMA_URL)('retrieval benchmark through ChromaDB (real server)', () => {
+  it('ranks the same documents as the in-memory (MongoDB-equivalent) index', async () => {
+    const { config } = await import('../../src/config/index.js');
+    config.vectorStore.chroma.url = CHROMA_URL;
+    const { evaluateRetrieval, createMemoryIndex } = await import('../../benchmarks/lib/retrievalEval.js');
+    const { createChromaIndex } = await import('../../benchmarks/lib/chromaIndex.js');
+    const { llmClient } = await import('../../src/ai/llmClient.js');
+    const embed = (text) => llmClient.embed(text);
+
+    const documents = [
+      { id: 'lipids', text: 'Cholesterol 242 mg/dL.' },
+      { id: 'thyroid', text: 'Thyroid TSH 6.8.' },
+      { id: 'allergy', text: 'Allergy: penicillin.' },
+    ];
+    const queries = [
+      { question: 'my cholesterol?', expected: 'lipids' },
+      { question: 'thyroid result?', expected: 'thyroid' },
+      { question: 'penicillin allergy?', expected: 'allergy' },
+      { question: 'which vaccine did I get?', expected: null },
+    ];
+
+    const chroma = await createChromaIndex(embed);
+    let viaChroma;
+    try {
+      viaChroma = await evaluateRetrieval({ documents, queries, topK: 2, threshold: 0.5, index: chroma });
+    } finally {
+      await chroma.close();
+    }
+    const viaMemory = await evaluateRetrieval({ documents, queries, topK: 2, threshold: 0.5, index: createMemoryIndex(embed) });
+
+    expect(viaChroma.hitRateAt1).toBe(1);
+    expect(viaChroma.correctDeclineRate).toBe(1);
+    // Same rank and decline decision per question. (The unanswerable one ties
+    // every chunk at 0, so only its decline is compared, not the tie order.)
+    const summary = (r) => r.perQuery.map((q) => [q.rank, q.declined, q.expected ? q.retrieved[0].documentId : null]);
+    expect(summary(viaChroma)).toEqual(summary(viaMemory));
+  });
+});
+

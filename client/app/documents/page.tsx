@@ -1,7 +1,8 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { apiFetch, apiJson } from '../lib/api';
+import { useEffect, useRef, useState } from 'react';
+import { apiFetch, apiJson, errorMessage } from '../lib/api';
+import { displayFileName, downloadDocument } from '../lib/download';
 import { useRequireAuth } from '../lib/useRequireAuth';
 
 interface MedicalDocument {
@@ -14,6 +15,8 @@ interface MedicalDocument {
   summary?: string;
   uploadDate: string;
   fileSize?: number;
+  extractionMethod?: 'pdf-text' | 'text' | 'ocr';
+  ocrConfidence?: number;
 }
 
 const DOCUMENT_TYPES = [
@@ -48,18 +51,19 @@ export default function DocumentsPage() {
   const [success, setSuccess] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const loadDocuments = useCallback(async () => {
-    try {
-      const data = await apiJson<{ documents: MedicalDocument[] }>('/api/documents');
-      setDocuments(data.documents);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load documents');
-    }
-  }, []);
+  const [reloadKey, setReloadKey] = useState(0);
+  const reload = () => setReloadKey((key) => key + 1);
 
   useEffect(() => {
-    if (user) loadDocuments();
-  }, [user, loadDocuments]);
+    if (!user) return;
+    let active = true;
+    apiJson<{ documents: MedicalDocument[] }>('/api/documents')
+      .then((data) => active && setDocuments(data.documents))
+      .catch((err) => active && setError(errorMessage(err, 'Failed to load documents')));
+    return () => {
+      active = false;
+    };
+  }, [user, reloadKey]);
 
   // While any document is still processing, re-check every 3 seconds.
   useEffect(() => {
@@ -67,9 +71,9 @@ export default function DocumentsPage() {
       (doc) => doc.processingStatus === 'pending' || doc.processingStatus === 'processing'
     );
     if (!busy) return;
-    const timer = setInterval(loadDocuments, 3000);
+    const timer = setInterval(() => setReloadKey((key) => key + 1), 3000);
     return () => clearInterval(timer);
-  }, [documents, loadDocuments]);
+  }, [documents]);
 
   const pickFile = (file: File | undefined) => {
     if (!file) return;
@@ -102,7 +106,7 @@ export default function DocumentsPage() {
       setSuccess('Document uploaded! Processing has started.');
       setSelectedFile(null);
       if (fileInputRef.current) fileInputRef.current.value = '';
-      await loadDocuments();
+      reload();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Upload failed');
     } finally {
@@ -111,12 +115,20 @@ export default function DocumentsPage() {
   };
 
   const handleDelete = async (doc: MedicalDocument) => {
-    if (!window.confirm(`Delete "${doc.fileName}"? This cannot be undone.`)) return;
+    if (!window.confirm(`Delete "${displayFileName(doc.fileName)}"? This cannot be undone.`)) return;
     try {
       await apiJson(`/api/documents/${doc._id}`, { method: 'DELETE' });
       setDocuments((prev) => prev.filter((d) => d._id !== doc._id));
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Delete failed');
+      setError(errorMessage(err, 'Delete failed'));
+    }
+  };
+
+  const handleDownload = async (doc: MedicalDocument) => {
+    try {
+      await downloadDocument(doc._id, doc.fileName);
+    } catch (err) {
+      setError(errorMessage(err, 'Download failed'));
     }
   };
 
@@ -146,11 +158,13 @@ export default function DocumentsPage() {
             <p className="text-gray-600">
               {dragging ? 'Drop the file here' : 'Drag & drop a file here, or click to browse'}
             </p>
-            <p className="text-sm text-gray-400 mt-2">PDF or TXT, up to 10 MB</p>
+            <p className="text-sm text-gray-400 mt-2">
+              PDF, TXT, or a PNG/JPEG photo of a lab result or prescription (read with OCR), up to 10 MB
+            </p>
             <input
               ref={fileInputRef}
               type="file"
-              accept=".pdf,.txt,application/pdf,text/plain"
+              accept=".pdf,.txt,.png,.jpg,.jpeg,application/pdf,text/plain,image/png,image/jpeg"
               className="hidden"
               onChange={(e) => pickFile(e.target.files?.[0])}
             />
@@ -193,7 +207,7 @@ export default function DocumentsPage() {
                 <li key={doc._id} className="py-4 flex items-start justify-between gap-4">
                   <div className="flex-1">
                     <div className="flex items-center gap-3 flex-wrap">
-                      <span className="font-bold">{doc.fileName}</span>
+                      <span className="font-bold">{displayFileName(doc.fileName)}</span>
                       <span className={`text-xs px-2 py-1 rounded-full font-bold ${STATUS_STYLES[doc.processingStatus]}`}>
                         {doc.processingStatus}
                       </span>
@@ -202,18 +216,25 @@ export default function DocumentsPage() {
                     <p className="text-sm text-gray-500 mt-1">
                       {doc.documentType} · uploaded {new Date(doc.uploadDate).toLocaleString()}
                       {doc.processingStatus === 'completed' && ` · ${doc.chunkCount} searchable sections`}
+                      {doc.extractionMethod === 'ocr' &&
+                        ` · read with OCR${doc.ocrConfidence !== undefined ? ` (${Math.round(doc.ocrConfidence)}% confidence)` : ''}`}
                     </p>
                     {doc.summary && <p className="text-sm text-gray-700 mt-2 bg-gray-50 rounded p-2">{doc.summary}</p>}
                     {doc.processingStatus === 'failed' && (
                       <p className="text-sm text-red-600 mt-1">Error: {doc.processingError}</p>
                     )}
                   </div>
-                  <button
-                    onClick={() => handleDelete(doc)}
-                    className="text-red-600 hover:text-red-800 font-bold"
-                  >
-                    Delete
-                  </button>
+                  <div className="flex flex-col items-end gap-2">
+                    <button onClick={() => handleDownload(doc)} className="text-blue-600 hover:text-blue-800 font-bold">
+                      Download
+                    </button>
+                    <button
+                      onClick={() => handleDelete(doc)}
+                      className="text-red-600 hover:text-red-800 font-bold"
+                    >
+                      Delete
+                    </button>
+                  </div>
                 </li>
               ))}
             </ul>

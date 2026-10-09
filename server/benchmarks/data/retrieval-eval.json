@@ -1,0 +1,171 @@
+{
+  "description": "Small synthetic labelled set for the retrieval eval (benchmarks/retrieval-eval.js). The documents are invented sample records, not real patient data. 'expected' is the id of the document that answers the question, or null when no document does (the chatbot should decline).",
+  "documents": [
+    {
+      "id": "lipid-panel",
+      "text": "Lipid panel, 12 March 2026. Total cholesterol 242 mg/dL (high). LDL cholesterol 165 mg/dL (high). HDL cholesterol 41 mg/dL. Triglycerides 180 mg/dL (borderline high). Comment: elevated LDL; diet changes advised and statin therapy discussed. Repeat lipid panel in three months."
+    },
+    {
+      "id": "cbc",
+      "text": "Complete blood count, 12 March 2026. Haemoglobin 10.9 g/dL (low). Haematocrit 33 percent (low). Mean corpuscular volume 76 fL (low). White blood cells 6.8 x10^9/L. Platelets 245 x10^9/L. Impression: microcytic anaemia, likely iron deficiency. Ferritin to follow."
+    },
+    {
+      "id": "thyroid",
+      "text": "Thyroid function test, 2 April 2026. TSH 6.8 mIU/L (high). Free T4 0.8 ng/dL (low normal). Anti-TPO antibodies positive. Impression: subclinical hypothyroidism, possibly Hashimoto thyroiditis. Recheck TSH in six weeks; consider levothyroxine."
+    },
+    {
+      "id": "diabetes",
+      "text": "Diabetes review, 20 April 2026. HbA1c 7.4 percent (above target). Fasting plasma glucose 148 mg/dL. Current medication metformin 500 mg twice daily, increased to 1000 mg twice daily. Annual eye screening and foot examination due. Target HbA1c below 7 percent."
+    },
+    {
+      "id": "chest-xray",
+      "text": "Chest X-ray report, 5 May 2026. Indication: persistent cough for three weeks. Findings: patchy consolidation in the right lower lobe. No pleural effusion. Heart size normal. Impression: right lower lobe pneumonia. Follow-up film in six weeks after antibiotics."
+    },
+    {
+      "id": "discharge",
+      "text": "Discharge summary, 9 May 2026. Admitted for community-acquired pneumonia. Treated with intravenous ceftriaxone, switched to oral amoxicillin-clavulanate for five more days. Oxygen saturation 97 percent on room air at discharge. Return if fever, breathlessness or chest pain."
+    },
+    {
+      "id": "prescription",
+      "text": "Prescription, 21 May 2026. Atorvastatin 20 mg once nightly. Ferrous sulfate 325 mg once daily with orange juice. Vitamin D3 2000 IU daily. Avoid taking iron within two hours of levothyroxine or antacids."
+    },
+    {
+      "id": "allergy",
+      "text": "Allergy record, updated 1 June 2026. Penicillin: hives and facial swelling in 2019 (severe). Sulfa drugs: rash. Latex: mild contact dermatitis. No known food allergies. Carry an epinephrine auto-injector."
+    },
+    {
+      "id": "cardiology",
+      "text": "Cardiology consultation, 15 June 2026. Reason: palpitations. ECG shows normal sinus rhythm, heart rate 72. Echocardiogram: left ventricular ejection fraction 60 percent, no valve disease. 24-hour Holter: occasional premature ventricular contractions, benign. Reduce caffeine."
+    },
+    {
+      "id": "vaccination",
+      "text": "Vaccination record. Influenza vaccine given 10 October 2025. Tetanus, diphtheria and pertussis booster given 3 February 2022. COVID-19 booster given 18 September 2025. Hepatitis B series complete. Pneumococcal vaccine not yet given; recommended."
+    }
+  ],
+  "queries": [
+    {
+      "question": "What was my LDL cholesterol?",
+      "expected": "lipid-panel"
+    },
+    {
+      "question": "Are my triglycerides high?",
+      "expected": "lipid-panel"
+    },
+    {
+      "question": "When should I repeat my cholesterol test?",
+      "expected": "lipid-panel"
+    },
+    {
+      "question": "Is my haemoglobin low?",
+      "expected": "cbc"
+    },
+    {
+      "question": "Do I have anaemia?",
+      "expected": "cbc"
+    },
+    {
+      "question": "What was my platelet count?",
+      "expected": "cbc"
+    },
+    {
+      "question": "What was my TSH level?",
+      "expected": "thyroid"
+    },
+    {
+      "question": "Do I have a thyroid problem?",
+      "expected": "thyroid"
+    },
+    {
+      "question": "What is my latest HbA1c?",
+      "expected": "diabetes"
+    },
+    {
+      "question": "What dose of metformin am I on now?",
+      "expected": "diabetes"
+    },
+    {
+      "question": "When is my diabetic eye screening due?",
+      "expected": "diabetes"
+    },
+    {
+      "question": "What did my chest X-ray show?",
+      "expected": "chest-xray"
+    },
+    {
+      "question": "Why did I have a cough for three weeks?",
+      "expected": "chest-xray"
+    },
+    {
+      "question": "Which antibiotics was I given in hospital?",
+      "expected": "discharge"
+    },
+    {
+      "question": "What was my oxygen level when I left the hospital?",
+      "expected": "discharge"
+    },
+    {
+      "question": "When should I go back to the hospital after discharge?",
+      "expected": "discharge"
+    },
+    {
+      "question": "What dose of atorvastatin was prescribed?",
+      "expected": "prescription"
+    },
+    {
+      "question": "How should I take my iron tablets?",
+      "expected": "prescription"
+    },
+    {
+      "question": "Am I allergic to penicillin?",
+      "expected": "allergy"
+    },
+    {
+      "question": "What happens when I take sulfa drugs?",
+      "expected": "allergy"
+    },
+    {
+      "question": "What was my ejection fraction?",
+      "expected": "cardiology"
+    },
+    {
+      "question": "What did the Holter monitor find?",
+      "expected": "cardiology"
+    },
+    {
+      "question": "Why was I seen by a cardiologist?",
+      "expected": "cardiology"
+    },
+    {
+      "question": "When did I last get a flu shot?",
+      "expected": "vaccination"
+    },
+    {
+      "question": "Do I need a pneumococcal vaccine?",
+      "expected": "vaccination"
+    },
+    {
+      "question": "What is my blood type?",
+      "expected": null
+    },
+    {
+      "question": "What did my knee MRI show?",
+      "expected": null
+    },
+    {
+      "question": "How much do I weigh?",
+      "expected": null
+    },
+    {
+      "question": "What was my kidney ultrasound result?",
+      "expected": null
+    },
+    {
+      "question": "Who is my dentist?",
+      "expected": null
+    },
+    {
+      "question": "What were my liver enzyme results?",
+      "expected": null
+    }
+  ]
+}

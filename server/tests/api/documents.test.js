@@ -65,6 +65,20 @@ describe('POST /api/documents', () => {
       });
     expect(res.status).toBe(400);
   });
+
+  it('rejects images, because OCR is not supported yet', async () => {
+    for (const [filename, contentType] of [
+      ['scan.png', 'image/png'],
+      ['scan.jpg', 'image/jpeg'],
+    ]) {
+      const res = await request(app)
+        .post('/api/documents')
+        .set(authHeader(patient.token))
+        .attach('file', Buffer.from('fake-image-bytes'), { filename, contentType });
+      expect(res.status).toBe(400);
+      expect(res.body.message).toMatch(/not allowed/);
+    }
+  });
 });
 
 describe('GET /api/documents', () => {

@@ -7,10 +7,27 @@ const num = (value, fallback) => {
   return Number.isFinite(parsed) ? parsed : fallback;
 };
 
+export const parseTrustProxy = (value) => {
+  if (value === undefined || value === '' || value === 'false') return false;
+  if (value === 'true') return true;
+  if (/^\d+$/.test(value)) return Number(value);
+  return value;
+};
+
 export const config = {
   env: process.env.NODE_ENV || 'development',
   isProduction: process.env.NODE_ENV === 'production',
   port: num(process.env.PORT, 5000),
+
+  // Set when the API runs behind a proxy or load balancer (Render, Fly,
+  // nginx) so req.ip and the per-IP rate limits see the real client:
+  // a hop count ("1"), "true", or a list of trusted addresses.
+  trustProxy: parseTrustProxy(process.env.TRUST_PROXY),
+
+  // Run the BullMQ workers inside the API process instead of a separate
+  // `npm run worker` process. Useful on hosts where a second process costs
+  // extra (e.g. a single Render web service).
+  runWorkersInProcess: process.env.RUN_WORKERS_IN_PROCESS === 'true',
 
   mongoUri: process.env.MONGO_URI || 'mongodb://localhost:27017/medflow',
 
@@ -42,6 +59,9 @@ export const config = {
   },
 
   redis: {
+    // A full URL wins over host/port/password. Use rediss:// for TLS, which
+    // hosted Redis such as Upstash requires.
+    url: process.env.REDIS_URL || undefined,
     host: process.env.REDIS_HOST || '127.0.0.1',
     port: num(process.env.REDIS_PORT, 6379),
     password: process.env.REDIS_PASSWORD || undefined,
@@ -68,7 +88,7 @@ export const config = {
     s3: {
       bucket: process.env.S3_BUCKET,
       region: process.env.S3_REGION || 'ap-south-1',
-      endpoint: process.env.S3_ENDPOINT, // set for MinIO / S3-compatible stores
+      endpoint: process.env.S3_ENDPOINT || undefined, // set for MinIO / R2 / S3-compatible stores
       accessKeyId: process.env.S3_ACCESS_KEY_ID,
       secretAccessKey: process.env.S3_SECRET_ACCESS_KEY,
     },

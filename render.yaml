@@ -1,0 +1,90 @@
+# Render Blueprint for the MedFlow API and its background worker.
+# Render dashboard -> New -> Blueprint -> pick this repository. Values marked
+# `sync: false` are asked for on the first deploy; see "Deploy" in README.md.
+#
+# The worker service needs a paid instance type (Render has no free
+# background workers). To stay on the free tier, delete the worker service
+# below and set RUN_WORKERS_IN_PROCESS=true on the API instead.
+
+envVarGroups:
+  - name: medflow-shared
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NODE_VERSION
+        value: "22"
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_REFRESH_SECRET
+        generateValue: true
+      # MongoDB Atlas connection string (mongodb+srv://...)
+      - key: MONGO_URI
+        sync: false
+      # Upstash Redis URL; it must start with rediss:// (TLS)
+      - key: REDIS_URL
+        sync: false
+      - key: LLM_PROVIDER
+        value: openai
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: LLM_CHAT_MODEL
+        value: gpt-4o-mini
+      - key: LLM_EMBEDDING_MODEL
+        value: text-embedding-3-small
+      # Render's disk is wiped on every deploy, so keep uploads in S3 or an
+      # S3-compatible store such as Cloudflare R2 (set S3_ENDPOINT for R2).
+      - key: FILE_STORAGE_TYPE
+        value: s3
+      - key: S3_BUCKET
+        sync: false
+      - key: S3_REGION
+        sync: false
+      - key: S3_ACCESS_KEY_ID
+        sync: false
+      - key: S3_SECRET_ACCESS_KEY
+        sync: false
+      - key: S3_ENDPOINT
+        sync: false
+      - key: EMAIL_DRIVER
+        value: mock
+      - key: SMS_DRIVER
+        value: mock
+
+services:
+  - type: web
+    name: medflow-api
+    runtime: node
+    plan: free
+    rootDir: server
+    buildCommand: npm ci
+    startCommand: npm start
+    # /api answers without touching MongoDB, Redis or the LLM, so a slow
+    # dependency does not make Render restart the service. /health reports
+    # every dependency for humans.
+    healthCheckPath: /api
+    envVars:
+      - fromGroup: medflow-shared
+      # The Vercel URL of the client, e.g. https://medflow.vercel.app
+      - key: CORS_ORIGINS
+        sync: false
+      # Client and API are on different sites, so the refresh cookie must be
+      # SameSite=None, which browsers accept only with Secure.
+      - key: REFRESH_COOKIE_SAMESITE
+        value: none
+      - key: REFRESH_COOKIE_SECURE
+        value: "true"
+      # Render puts one proxy in front of the service.
+      - key: TRUST_PROXY
+        value: "1"
+      - key: RUN_WORKERS_IN_PROCESS
+        value: "false"
+
+  - type: worker
+    name: medflow-worker
+    runtime: node
+    plan: starter
+    rootDir: server
+    buildCommand: npm ci
+    startCommand: npm run worker
+    envVars:
+      - fromGroup: medflow-shared

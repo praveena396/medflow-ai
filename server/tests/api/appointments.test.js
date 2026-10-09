@@ -12,6 +12,7 @@ vi.mock('../../src/queues/index.js', () => ({
 import { enqueueNotification } from '../../src/queues/index.js';
 import { createApp } from '../../src/app.js';
 import { setupTestDB, teardownTestDB, registerUser, createStaffUser, authHeader } from '../helpers.js';
+import { Appointment } from '../../src/models/index.js';
 
 const app = createApp();
 let patient;
@@ -28,6 +29,16 @@ afterAll(async () => {
 });
 
 const tomorrow = () => new Date(Date.now() + 24 * 60 * 60 * 1000 + 60 * 60 * 1000).toISOString();
+
+// Fixed future slots, counted in hours from a base three days ahead, so
+// bookings made by different tests never fall on the same time.
+const BASE_TIME = (() => {
+  const base = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000);
+  base.setUTCMinutes(0, 0, 0);
+  return base.getTime();
+})();
+const slot = (hours, minutes = 0) =>
+  new Date(BASE_TIME + hours * 60 * 60 * 1000 + minutes * 60 * 1000).toISOString();
 
 describe('GET /api/appointments/doctors', () => {
   it('lists available doctors', async () => {
@@ -91,5 +102,77 @@ describe('DELETE /api/appointments/:id', () => {
       .delete('/api/appointments/64b000000000000000000000')
       .set(authHeader(patient.token));
     expect(res.status).toBe(404);
+  });
+});
+
+describe('appointment ownership', () => {
+  let otherPatient;
+  let otherDoctor;
+  let admin;
+  let appointmentId;
+
+  beforeAll(async () => {
+    otherPatient = await registerUser(app);
+    otherDoctor = await createStaffUser(app, 'doctor');
+    admin = await createStaffUser(app, 'admin');
+
+    const res = await request(app)
+      .post('/api/appointments')
+      .set(authHeader(patient.token))
+      .send({ doctorId: doctor.userId, dateTime: slot(10), reason: 'Ownership check' });
+    appointmentId = res.body.appointment._id;
+  });
+
+  it('lets the patient who booked it update it', async () => {
+    const res = await request(app)
+      .patch(`/api/appointments/${appointmentId}`)
+      .set(authHeader(patient.token))
+      .send({ reason: 'Ownership check (updated)' });
+    expect(res.status).toBe(200);
+    expect(res.body.appointment.reason).toBe('Ownership check (updated)');
+  });
+
+  it('stops another patient from updating it', async () => {
+    const res = await request(app)
+      .patch(`/api/appointments/${appointmentId}`)
+      .set(authHeader(otherPatient.token))
+      .send({ reason: 'Hijacked' });
+    expect(res.status).toBe(403);
+    const stored = await Appointment.findById(appointmentId);
+    expect(stored.reason).toBe('Ownership check (updated)');
+  });
+
+  it('stops another patient from cancelling it', async () => {
+    const res = await request(app)
+      .delete(`/api/appointments/${appointmentId}`)
+      .set(authHeader(otherPatient.token));
+    expect(res.status).toBe(403);
+    const stored = await Appointment.findById(appointmentId);
+    expect(stored.status).toBe('scheduled');
+  });
+
+  it('stops a doctor who is not assigned to it from changing it', async () => {
+    const res = await request(app)
+      .patch(`/api/appointments/${appointmentId}`)
+      .set(authHeader(otherDoctor.token))
+      .send({ status: 'completed' });
+    expect(res.status).toBe(403);
+  });
+
+  it('lets the assigned doctor update it', async () => {
+    const res = await request(app)
+      .patch(`/api/appointments/${appointmentId}`)
+      .set(authHeader(doctor.token))
+      .send({ status: 'completed' });
+    expect(res.status).toBe(200);
+    expect(res.body.appointment.status).toBe('completed');
+  });
+
+  it('lets an admin cancel any appointment', async () => {
+    const res = await request(app)
+      .delete(`/api/appointments/${appointmentId}`)
+      .set(authHeader(admin.token));
+    expect(res.status).toBe(200);
+    expect(res.body.appointment.status).toBe('cancelled');
   });
 });

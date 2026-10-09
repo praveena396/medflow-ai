@@ -2,6 +2,15 @@ import { Appointment, User } from '../models/index.js';
 import { enqueueNotification } from '../queues/index.js';
 import { logger } from '../utils/logger.js';
 
+// Who may change an appointment: admins may change any; doctors only those
+// assigned to them; patients only their own. req.user comes from the verified JWT.
+export const canModifyAppointment = (user, appointment) => {
+  if (!user) return false;
+  if (user.role === 'admin') return true;
+  if (user.role === 'doctor') return appointment.doctorId?.toString() === user.userId;
+  return appointment.patientId?.toString() === user.userId;
+};
+
 // List doctors available for booking (patients need this to create an appointment)
 export const getDoctors = async (req, res) => {
   try {
@@ -105,15 +114,18 @@ export const updateAppointment = async (req, res) => {
     const { id } = req.params;
     const { dateTime, reason, status } = req.body;
 
-    const appointment = await Appointment.findByIdAndUpdate(
-      id,
-      { dateTime, reason, status },
-      { new: true }
-    );
-
+    const appointment = await Appointment.findById(id);
     if (!appointment) {
       return res.status(404).json({ message: 'Appointment not found' });
     }
+    if (!canModifyAppointment(req.user, appointment)) {
+      return res.status(403).json({ message: 'You can only change your own appointments' });
+    }
+
+    if (dateTime !== undefined) appointment.dateTime = dateTime;
+    if (reason !== undefined) appointment.reason = reason;
+    if (status !== undefined) appointment.status = status;
+    await appointment.save();
 
     logger.info(`Appointment updated: ${id}`);
 
@@ -131,15 +143,16 @@ export const cancelAppointment = async (req, res) => {
   try {
     const { id } = req.params;
 
-    const appointment = await Appointment.findByIdAndUpdate(
-      id,
-      { status: 'cancelled' },
-      { new: true }
-    );
-
+    const appointment = await Appointment.findById(id);
     if (!appointment) {
       return res.status(404).json({ message: 'Appointment not found' });
     }
+    if (!canModifyAppointment(req.user, appointment)) {
+      return res.status(403).json({ message: 'You can only cancel your own appointments' });
+    }
+
+    appointment.status = 'cancelled';
+    await appointment.save();
 
     logger.info(`Appointment cancelled: ${id}`);
 

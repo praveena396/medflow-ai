@@ -1,0 +1,110 @@
+name: API benchmark
+
+# Manual only: Actions tab -> "API benchmark" -> Run workflow.
+# Runs benchmarks/api-load.js (autocannon) against the API on a GitHub-hosted
+# runner, with MongoDB and Redis as service containers, and uploads the JSON
+# result. The load generator and the server share one runner, so treat the
+# numbers as a description of that environment, not of production.
+on:
+  workflow_dispatch:
+    inputs:
+      connections:
+        description: Concurrent connections
+        required: true
+        default: '50'
+      duration:
+        description: Seconds per route
+        required: true
+        default: '20'
+
+permissions:
+  contents: read
+
+jobs:
+  api-load:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      mongo:
+        image: mongo:7
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.runCommand({ ping: 1 })'"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    defaults:
+      run:
+        working-directory: server
+
+    env:
+      NODE_ENV: production
+      PORT: '5000'
+      MONGO_URI: mongodb://localhost:27017/medflow-bench
+      REDIS_HOST: 127.0.0.1
+      REDIS_PORT: '6379'
+      EMAIL_DRIVER: mock
+      SMS_DRIVER: mock
+      LOG_LEVEL: error
+      # Lift the per-IP limits: every benchmark request comes from one IP.
+      RATE_LIMIT_MAX: '100000000'
+      AUTH_RATE_LIMIT_MAX: '1000'
+      MONGOMS_DISABLE_POSTINSTALL: '1'
+      BENCH_URL: http://localhost:5000
+      BENCH_CONNECTIONS: ${{ inputs.connections }}
+      BENCH_DURATION: ${{ inputs.duration }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate throwaway JWT secrets
+        run: |
+          echo "JWT_SECRET=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+          echo "JWT_REFRESH_SECRET=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+
+      - name: Seed starter accounts (gives /api/appointments/doctors real rows)
+        run: npm run seed
+
+      - name: Start the API
+        run: |
+          nohup npm start > server.out 2>&1 &
+          for i in $(seq 1 60); do
+            if curl -fsS http://localhost:5000/api > /dev/null; then echo "API is up"; exit 0; fi
+            sleep 1
+          done
+          echo "API did not start"; cat server.out; exit 1
+
+      - name: Run the benchmark
+        run: npm run bench:api
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: api-benchmark-${{ github.run_id }}
+          path: |
+            server/benchmarks/results/
+            server/server.out
+            server/error.log
+          if-no-files-found: warn

@@ -23,12 +23,17 @@ class LLMClient {
   }
 
   // messages: [{ role: 'system' | 'user' | 'assistant', content: string }]
-  async chat(messages, { temperature = 0.2 } = {}) {
+  // json: ask the provider for a JSON object (Ollama `format: "json"`, OpenAI
+  //   `response_format: json_object`; the prompt must still say "JSON").
+  // maxTokens: cap the reply length (Ollama `num_predict`, OpenAI `max_tokens`).
+  async chat(messages, { temperature = 0.2, json = false, maxTokens } = {}) {
     if (this.provider === 'openai') {
       const { data } = await this.http.post('/chat/completions', {
         model: config.llm.chatModel,
         messages,
         temperature,
+        ...(json && { response_format: { type: 'json_object' } }),
+        ...(maxTokens && { max_tokens: maxTokens }),
       });
       return data.choices[0].message.content;
     }
@@ -37,7 +42,8 @@ class LLMClient {
       model: config.llm.chatModel,
       messages,
       stream: false,
-      options: { temperature },
+      ...(json && { format: 'json' }),
+      options: { temperature, ...(maxTokens && { num_predict: maxTokens }) },
     });
     return data.message.content;
   }

@@ -76,6 +76,10 @@ export const config = {
     openaiApiKey: process.env.OPENAI_API_KEY,
     requestTimeoutMs: num(process.env.LLM_TIMEOUT_MS, 60000),
     similarityThreshold: num(process.env.RAG_SIMILARITY_THRESHOLD, 0.45),
+    // After retrieval, ask the chat model whether the retrieved excerpts
+    // actually contain the answer, and decline if they don't. On by default;
+    // RAG_GROUNDING_CHECK=false restores the similarity-only decision.
+    groundingCheck: process.env.RAG_GROUNDING_CHECK !== 'false',
   },
 
   // Where chunk embeddings live and how they are searched:

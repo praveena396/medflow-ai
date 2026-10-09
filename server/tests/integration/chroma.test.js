@@ -13,7 +13,10 @@ vi.mock('../../src/ai/llmClient.js', () => ({
       const v = VOCAB.map((word) => (lower.includes(word) ? 1 : 0));
       return v.some(Boolean) ? v : [0, 0, 0, 0, 0.01]; // never an all-zero vector
     }),
-    chat: vi.fn(async () => 'Your cholesterol was 242 mg/dL.'),
+    // The grounding check (JSON-only system prompt) says yes; the answer call gets text.
+    chat: vi.fn(async (messages) =>
+      /"answerable"/.test(messages[0].content) ? '{"answerable": true}' : 'Your cholesterol was 242 mg/dL.'
+    ),
     isAvailable: vi.fn(async () => true),
   },
 }));
@@ -73,7 +76,8 @@ describe.skipIf(!CHROMA_URL)('ChromaDB vector store (real server)', () => {
     const answer = await ragChain.processQuery('What was my cholesterol?', { patientId: 'alice' });
     expect(answer.success).toBe(true);
     expect(answer.declined).toBeFalsy();
-    expect(llmClient.chat).toHaveBeenCalledTimes(1);
+    expect(llmClient.chat).toHaveBeenCalledTimes(2); // grounding check, then the answer
+    expect(answer.message).toBe('Your cholesterol was 242 mg/dL.');
     expect(answer.sourceDocuments[0]).toMatchObject({ fileName: 'lipids.pdf' });
     expect(answer.sourceDocuments.every((d) => d.score >= config.llm.similarityThreshold)).toBe(true);
   });

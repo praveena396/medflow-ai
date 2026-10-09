@@ -68,7 +68,9 @@ describe('AI outputs are audited', () => {
       embedding: Array(768).fill(0.1),
       fileName: 'lipids.pdf',
     });
-    llmClient.chat.mockResolvedValueOnce('Your LDL was 165 mg/dL.');
+    llmClient.chat
+      .mockResolvedValueOnce('{"answerable": true}') // grounding check
+      .mockResolvedValueOnce('Your LDL was 165 mg/dL.');
     await request(app).post('/api/chat').set(authHeader(patient.token)).send({ message: 'My LDL?' });
 
     const log = await audit('?action=ai.chat.answer');

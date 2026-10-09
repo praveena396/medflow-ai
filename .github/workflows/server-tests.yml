@@ -31,6 +31,11 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 20
+      # For tests/integration/chroma.test.js (runs only when CHROMA_URL is set).
+      chroma:
+        image: chromadb/chroma:1.5.9
+        ports:
+          - 8000:8000
 
     defaults:
       run:
@@ -42,6 +47,7 @@ jobs:
       MONGOMS_DISABLE_POSTINSTALL: '1'
       REDIS_HOST: 127.0.0.1
       REDIS_PORT: '6379'
+      CHROMA_URL: http://localhost:8000
 
     steps:
       - uses: actions/checkout@v4
@@ -54,6 +60,14 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Wait for ChromaDB
+        run: |
+          for i in $(seq 1 60); do
+            if curl -fsS http://localhost:8000/api/v2/heartbeat > /dev/null; then echo "Chroma is up"; exit 0; fi
+            sleep 1
+          done
+          echo "Chroma did not start"; exit 1
 
       - name: Run tests
         run: npm test

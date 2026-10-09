@@ -63,6 +63,8 @@ export const config = {
     driver: process.env.FILE_STORAGE_TYPE || 'local',
     uploadDir: process.env.UPLOAD_DIR || './uploads',
     maxFileSizeBytes: num(process.env.MAX_FILE_SIZE, 10 * 1024 * 1024),
+    // Lifetime of S3 pre-signed download links, in seconds (15 minutes).
+    downloadUrlExpirySeconds: num(process.env.DOWNLOAD_URL_EXPIRY_SECONDS, 15 * 60),
     s3: {
       bucket: process.env.S3_BUCKET,
       region: process.env.S3_REGION || 'ap-south-1',

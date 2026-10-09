@@ -6,7 +6,13 @@ import {
   getDocuments,
   getDocumentStatus,
   deleteDocument,
+  getDocumentDownload,
+  streamDocumentFile,
 } from '../controllers/documentController.js';
+import { param } from 'express-validator';
+import { validate } from '../middleware/validate.js';
+
+const validateId = validate([param('id').isMongoId().withMessage('Document id is not valid')]);
 import { authenticateToken } from '../middleware/auth.js';
 
 const router = express.Router();
@@ -29,6 +35,8 @@ router.use(authenticateToken);
 router.post('/', upload.single('file'), uploadDocument);
 router.get('/', getDocuments);
 router.get('/:id/status', getDocumentStatus);
+router.get('/:id/download', validateId, getDocumentDownload);
+router.get('/:id/file', validateId, streamDocumentFile);
 router.delete('/:id', deleteDocument);
 
 // Turn multer errors (file too large, bad type) into clean 400 responses.

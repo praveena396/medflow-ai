@@ -4,6 +4,8 @@
 #   docker compose exec ollama ollama pull llama3.2
 #   docker compose exec ollama ollama pull nomic-embed-text
 # Secrets (JWT_SECRET, JWT_REFRESH_SECRET) are read from server/.env.
+# Optional ChromaDB vector store (set VECTOR_STORE=chroma in server/.env):
+#   docker compose --profile chroma up -d
 
 services:
   mongo:
@@ -26,6 +28,16 @@ services:
       timeout: 5s
       retries: 5
 
+  # Only started with `--profile chroma`; used when VECTOR_STORE=chroma.
+  chroma:
+    image: chromadb/chroma:1.5.9
+    profiles: ["chroma"]
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      - chroma_data:/data
+
   ollama:
     image: ollama/ollama:latest
     restart: unless-stopped
@@ -43,6 +55,7 @@ services:
       MONGO_URI: mongodb://mongo:27017/medflow
       REDIS_HOST: redis
       OLLAMA_BASE_URL: http://ollama:11434
+      CHROMA_URL: http://chroma:8000
       UPLOAD_DIR: /app/uploads
     volumes:
       - uploads:/app/uploads
@@ -61,6 +74,7 @@ services:
       MONGO_URI: mongodb://mongo:27017/medflow
       REDIS_HOST: redis
       OLLAMA_BASE_URL: http://ollama:11434
+      CHROMA_URL: http://chroma:8000
       UPLOAD_DIR: /app/uploads
     volumes:
       - uploads:/app/uploads
@@ -83,6 +97,7 @@ services:
       - server
 
 volumes:
+  chroma_data:
   mongo_data:
   ollama_models:
   uploads:

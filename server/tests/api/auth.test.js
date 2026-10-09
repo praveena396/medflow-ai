@@ -52,6 +52,20 @@ describe('POST /api/auth/register', () => {
     const res = await request(app).post('/api/auth/register').send({ email: 'x@y.test' });
     expect(res.status).toBe(400);
   });
+
+  it('rejects an invalid email or a short password', async () => {
+    const badEmail = await request(app)
+      .post('/api/auth/register')
+      .send({ name: 'Bob', email: 'bob-at-medflow', password: 'Secret@123' });
+    expect(badEmail.status).toBe(400);
+    expect(badEmail.body.errors[0].field).toBe('email');
+
+    const shortPassword = await request(app)
+      .post('/api/auth/register')
+      .send({ name: 'Bob', email: 'bob@medflow.test', password: 'abc' });
+    expect(shortPassword.status).toBe(400);
+    expect(shortPassword.body.errors[0].field).toBe('password');
+  });
 });
 
 describe('POST /api/auth/login', () => {
@@ -68,6 +82,13 @@ describe('POST /api/auth/login', () => {
       .post('/api/auth/login')
       .send({ email: 'alice@medflow.test', password: 'WrongPassword1' });
     expect(res.status).toBe(401);
+  });
+
+  it('matches the email case-insensitively', async () => {
+    const res = await request(app)
+      .post('/api/auth/login')
+      .send({ email: 'Alice@MedFlow.test', password: 'Secret@123' });
+    expect(res.status).toBe(200);
   });
 
   it('rejects an unknown email', async () => {

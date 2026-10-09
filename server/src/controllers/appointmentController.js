@@ -2,6 +2,7 @@ import { Appointment, User } from '../models/index.js';
 import { enqueueNotification } from '../queues/index.js';
 import { logger } from '../utils/logger.js';
 import { appointmentReminderSms } from '../services/notificationService.js';
+import { recordAudit, diffFields } from '../services/auditService.js';
 
 // Who may change an appointment: admins may change any; doctors only those
 // assigned to them; patients only their own. req.user comes from the verified JWT.
@@ -176,6 +177,8 @@ export const updateAppointment = async (req, res) => {
       return res.status(403).json({ message: 'You can only change your own appointments' });
     }
 
+    const before = { dateTime: appointment.dateTime, reason: appointment.reason, status: appointment.status };
+
     if (dateTime !== undefined) {
       if (Number.isNaN(new Date(dateTime).getTime())) {
         return res.status(400).json({ message: 'dateTime must be a valid date' });
@@ -199,6 +202,16 @@ export const updateAppointment = async (req, res) => {
     }
 
     await appointment.save();
+
+    if (req.user.role === 'admin') {
+      await recordAudit({
+        req,
+        action: 'admin.appointment.update',
+        targetType: 'appointment',
+        targetId: appointment._id,
+        details: { changes: diffFields(before, appointment, ['dateTime', 'reason', 'status']) },
+      });
+    }
 
     logger.info(`Appointment updated: ${id}`);
 
@@ -224,8 +237,19 @@ export const cancelAppointment = async (req, res) => {
       return res.status(403).json({ message: 'You can only cancel your own appointments' });
     }
 
+    const previousStatus = appointment.status;
     appointment.status = 'cancelled';
     await appointment.save();
+
+    if (req.user.role === 'admin') {
+      await recordAudit({
+        req,
+        action: 'admin.appointment.cancel',
+        targetType: 'appointment',
+        targetId: appointment._id,
+        details: { changes: { status: { from: previousStatus, to: 'cancelled' } } },
+      });
+    }
 
     logger.info(`Appointment cancelled: ${id}`);
 

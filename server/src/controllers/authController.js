@@ -89,6 +89,9 @@ export const login = async (req, res) => {
     if (!isPasswordValid) {
       return res.status(401).json({ message: 'Invalid credentials' });
     }
+    if (!user.isActive) {
+      return res.status(403).json({ message: 'This account has been deactivated' });
+    }
 
     // Generate tokens
     const { accessToken, refreshToken } = generateTokens(user._id, user.role);

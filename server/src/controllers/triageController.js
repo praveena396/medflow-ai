@@ -1,6 +1,7 @@
 import { ragChain } from '../ai/ragChain.js';
 import { Triage } from '../models/index.js';
 import { logger } from '../utils/logger.js';
+import { recordAudit } from '../services/auditService.js';
 
 export const submitSymptoms = async (req, res) => {
   try {
@@ -15,6 +16,12 @@ export const submitSymptoms = async (req, res) => {
     const triageResult = await ragChain.triageSymptoms(symptoms);
 
     if (!triageResult.success) {
+      await recordAudit({
+        req,
+        action: 'ai.triage.error',
+        targetType: 'triage',
+        details: { symptoms, error: triageResult.error },
+      });
       return res.status(500).json({ message: 'Triage failed' });
     }
 
@@ -29,6 +36,20 @@ export const submitSymptoms = async (req, res) => {
       nextSteps: triageResult.nextSteps,
     });
     await triageRecord.save();
+
+    await recordAudit({
+      req,
+      action: 'ai.triage',
+      targetType: 'triage',
+      targetId: triageRecord._id,
+      details: {
+        symptoms,
+        duration,
+        severity,
+        urgency: triageResult.urgency,
+        recommendation: triageResult.recommendation,
+      },
+    });
 
     logger.info(`🏥 Triage submitted by user: ${userId} - Urgency: ${triageResult.urgency}`);
 

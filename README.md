@@ -321,6 +321,7 @@ docker compose exec ollama ollama pull nomic-embed-text
 
 ## Roadmap
 
+- [ ] OCR for scanned PDFs and images (e.g. tesseract.js); PNG/JPEG uploads are rejected until then
 - [ ] FHIR integration for hospital system interoperability
 - [ ] Voice input for triage via Web Speech API
 - [ ] Multi-language support — Hindi and Telugu

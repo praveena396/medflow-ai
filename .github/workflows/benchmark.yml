@@ -1,10 +1,15 @@
 name: API benchmark
 
 # Manual only: Actions tab -> "API benchmark" -> Run workflow.
-# Runs benchmarks/api-load.js (autocannon) against the API on a GitHub-hosted
-# runner, with MongoDB and Redis as service containers, and uploads the JSON
-# result. The load generator and the server share one runner, so treat the
-# numbers as a description of that environment, not of production.
+# Two jobs on GitHub-hosted runners:
+#   api-load:  benchmarks/api-load.js (autocannon) against the API, with
+#              MongoDB and Redis as service containers. The load generator and
+#              the server share one runner, so treat the numbers as a
+#              description of that environment, not of production.
+#   retrieval-and-pipeline: installs Ollama, pulls nomic-embed-text and runs
+#              benchmarks/retrieval-eval.js and benchmarks/document-pipeline.js
+#              (CPU only, so embedding is slower than on a GPU).
+# Each job prints its JSON results to the log and uploads them as an artifact.
 on:
   workflow_dispatch:
     inputs:
@@ -105,6 +110,10 @@ jobs:
       - name: Run the benchmark
         run: npm run bench:api
 
+      - name: Print results
+        if: always()
+        run: for f in benchmarks/results/*.json; do echo "== $f"; cat "$f"; done
+
       - name: Upload results
         if: always()
         uses: actions/upload-artifact@v4
@@ -114,4 +123,64 @@ jobs:
             server/benchmarks/results/
             server/server.out
             server/error.log
+          if-no-files-found: warn
+
+  retrieval-and-pipeline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    defaults:
+      run:
+        working-directory: server
+
+    env:
+      LLM_PROVIDER: ollama
+      OLLAMA_BASE_URL: http://127.0.0.1:11434
+      LLM_EMBEDDING_MODEL: nomic-embed-text
+      LOG_LEVEL: error
+      MONGOMS_DISABLE_POSTINSTALL: '1'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci --include=dev
+
+      - name: Install Ollama and pull the embedding model
+        run: |
+          curl -fsSL https://ollama.com/install.sh | sh
+          # The installer starts a systemd service on most runners; start one
+          # by hand if it did not.
+          if ! curl -fsS http://127.0.0.1:11434/api/tags > /dev/null 2>&1; then
+            nohup ollama serve > ollama.out 2>&1 &
+          fi
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:11434/api/tags > /dev/null; then echo "Ollama is up"; break; fi
+            sleep 1
+          done
+          ollama pull nomic-embed-text
+          ollama list
+
+      - name: Retrieval quality (hit@4, hit@1, MRR)
+        run: npm run bench:retrieval
+
+      - name: Document pipeline timing (20-page PDF, OCR of one image page)
+        run: npm run bench:pipeline
+
+      - name: Print results
+        if: always()
+        run: for f in benchmarks/results/*.json; do echo "== $f"; cat "$f"; done
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: retrieval-pipeline-${{ github.run_id }}
+          path: server/benchmarks/results/
           if-no-files-found: warn

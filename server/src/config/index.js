@@ -21,6 +21,18 @@ export const config = {
     refreshExpiry: process.env.JWT_REFRESH_EXPIRY || '7d',
   },
 
+  // The refresh token travels only in this httpOnly cookie, scoped to the
+  // auth routes. SameSite=Strict works when the client and API share a site
+  // (localhost:3000 -> localhost:5000); use 'none' (which requires Secure)
+  // when they are on different sites, e.g. Vercel + Render.
+  refreshCookie: {
+    name: process.env.REFRESH_COOKIE_NAME || 'medflow_rt',
+    secure: process.env.REFRESH_COOKIE_SECURE !== 'false',
+    sameSite: (process.env.REFRESH_COOKIE_SAMESITE || 'strict').toLowerCase(),
+    path: '/api/auth',
+    domain: process.env.REFRESH_COOKIE_DOMAIN || undefined,
+  },
+
   cors: {
     // Comma-separated list of allowed origins
     origins: (process.env.CORS_ORIGINS || 'http://localhost:3000')

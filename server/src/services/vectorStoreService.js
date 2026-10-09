@@ -1,6 +1,8 @@
 import { DocumentChunk } from '../models/index.js';
 import { embeddingsService } from './embeddingsService.js';
 import { logger } from '../utils/logger.js';
+import { config } from '../config/index.js';
+import { ChromaVectorStore } from './chromaVectorStore.js';
 
 // cosine similarity: 1 = same meaning, 0 = unrelated
 export const cosineSimilarity = (a, b) => {
@@ -16,7 +18,10 @@ export const cosineSimilarity = (a, b) => {
   return dot / (Math.sqrt(normA) * Math.sqrt(normB));
 };
 
-class VectorStoreService {
+// MongoDB driver (VECTOR_STORE=mongo, the default): chunks and their
+// embeddings live in the DocumentChunk collection, and a search ranks one
+// patient's chunks by cosine similarity in Node.
+export class MongoVectorStore {
   // Embed a text chunk and persist it, scoped to a patient.
   async addDocument(text, metadata = {}) {
     try {
@@ -98,6 +103,31 @@ class VectorStoreService {
   async getDocumentCount() {
     return DocumentChunk.estimatedDocumentCount();
   }
+
+  async isAvailable() {
+    return true; // lives in MongoDB, which /health already reports
+  }
 }
 
-export const vectorStore = new VectorStoreService();
+// Picks the driver from VECTOR_STORE on each call (so tests can switch it)
+// and keeps one instance of each.
+const drivers = {};
+export const getVectorStoreDriver = (name = config.vectorStore.driver) => {
+  if (!drivers[name]) {
+    if (name === 'chroma') drivers[name] = new ChromaVectorStore();
+    else if (name === 'mongo') drivers[name] = new MongoVectorStore();
+    else throw new Error(`Unknown VECTOR_STORE "${name}" (use mongo or chroma)`);
+  }
+  return drivers[name];
+};
+
+export const vectorStore = {
+  get driver() {
+    return config.vectorStore.driver;
+  },
+  addDocument: (...args) => getVectorStoreDriver().addDocument(...args),
+  search: (...args) => getVectorStoreDriver().search(...args),
+  deleteDocument: (...args) => getVectorStoreDriver().deleteDocument(...args),
+  getDocumentCount: () => getVectorStoreDriver().getDocumentCount(),
+  isAvailable: () => getVectorStoreDriver().isAvailable(),
+};

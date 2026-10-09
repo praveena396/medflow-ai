@@ -78,6 +78,21 @@ export const config = {
     similarityThreshold: num(process.env.RAG_SIMILARITY_THRESHOLD, 0.45),
   },
 
+  // Where chunk embeddings live and how they are searched:
+  //   'mongo'  - in MongoDB, ranked by cosine similarity in Node (default)
+  //   'chroma' - in a ChromaDB collection (cosine space), filtered by patientId
+  vectorStore: {
+    driver: (process.env.VECTOR_STORE || 'mongo').toLowerCase(),
+    chroma: {
+      url: process.env.CHROMA_URL || 'http://localhost:8000',
+      // The embedding model's name is appended, so vectors of different sizes
+      // never share a collection.
+      collection: process.env.CHROMA_COLLECTION || 'medflow_chunks',
+      tenant: process.env.CHROMA_TENANT || undefined,
+      database: process.env.CHROMA_DATABASE || undefined,
+    },
+  },
+
   storage: {
     // 'local' (dev) or 's3' (production / MinIO)
     driver: process.env.FILE_STORAGE_TYPE || 'local',

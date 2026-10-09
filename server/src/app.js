@@ -8,6 +8,7 @@ import { config } from './config/index.js';
 import { redis } from './config/redis.js';
 import { logger } from './utils/logger.js';
 import { llmClient } from './ai/llmClient.js';
+import { vectorStore } from './services/vectorStoreService.js';
 import { apiLimiter, authLimiter } from './middleware/rateLimiter.js';
 import authRoutes from './routes/authRoutes.js';
 import appointmentRoutes from './routes/appointmentRoutes.js';
@@ -38,18 +39,22 @@ export const createApp = () => {
 
   // Health Check — reports the real status of every dependency.
   app.get('/health', async (req, res) => {
-    const [redisOk, llmOk] = await Promise.all([
+    const usesChroma = vectorStore.driver === 'chroma';
+    const [redisOk, llmOk, chromaOk] = await Promise.all([
       redis
         .ping()
         .then(() => true)
         .catch(() => false),
       llmClient.isAvailable(),
+      usesChroma ? vectorStore.isAvailable() : Promise.resolve(true),
     ]);
 
     const services = {
       database: mongoose.connection.readyState === 1 ? 'up' : 'down',
       redis: redisOk ? 'up' : 'down',
       llm: llmOk ? 'up' : 'down',
+      // Reported only when chunks live in ChromaDB (VECTOR_STORE=chroma).
+      ...(usesChroma && { vectorStore: chromaOk ? 'up' : 'down' }),
     };
     const healthy = Object.values(services).every((status) => status === 'up');
 

@@ -28,8 +28,6 @@ afterAll(async () => {
   await teardownTestDB();
 });
 
-const tomorrow = () => new Date(Date.now() + 24 * 60 * 60 * 1000 + 60 * 60 * 1000).toISOString();
-
 // Fixed future slots, counted in hours from a base three days ahead, so
 // bookings made by different tests never fall on the same time.
 const BASE_TIME = (() => {
@@ -53,7 +51,7 @@ describe('POST /api/appointments', () => {
     const res = await request(app)
       .post('/api/appointments')
       .set(authHeader(patient.token))
-      .send({ doctorId: doctor.userId, dateTime: tomorrow(), reason: 'Annual checkup' });
+      .send({ doctorId: doctor.userId, dateTime: slot(0), reason: 'Annual checkup' });
 
     expect(res.status).toBe(201);
     expect(res.body.appointment.status).toBe('scheduled');
@@ -87,7 +85,7 @@ describe('DELETE /api/appointments/:id', () => {
     const created = await request(app)
       .post('/api/appointments')
       .set(authHeader(patient.token))
-      .send({ doctorId: doctor.userId, dateTime: tomorrow(), reason: 'To be cancelled' });
+      .send({ doctorId: doctor.userId, dateTime: slot(2), reason: 'To be cancelled' });
 
     const res = await request(app)
       .delete(`/api/appointments/${created.body.appointment._id}`)
@@ -174,5 +172,70 @@ describe('appointment ownership', () => {
       .set(authHeader(admin.token));
     expect(res.status).toBe(200);
     expect(res.body.appointment.status).toBe('cancelled');
+  });
+});
+
+describe('double-booking guard', () => {
+  let secondDoctor;
+  let secondPatient;
+  let firstId;
+
+  const book = (user, body) =>
+    request(app).post('/api/appointments').set(authHeader(user.token)).send({ reason: 'Visit', ...body });
+
+  beforeAll(async () => {
+    secondDoctor = await createStaffUser(app, 'doctor');
+    secondPatient = await registerUser(app);
+    const res = await book(patient, { doctorId: doctor.userId, dateTime: slot(20) });
+    expect(res.status).toBe(201);
+    firstId = res.body.appointment._id;
+  });
+
+  it('rejects a booking that starts inside an existing appointment', async () => {
+    const res = await book(secondPatient, { doctorId: doctor.userId, dateTime: slot(20, 15) });
+    expect(res.status).toBe(409);
+  });
+
+  it('rejects a booking that starts earlier but runs into an existing appointment', async () => {
+    const res = await book(secondPatient, { doctorId: doctor.userId, dateTime: slot(19, 45) });
+    expect(res.status).toBe(409);
+  });
+
+  it('allows a back-to-back booking that starts when the previous one ends', async () => {
+    const res = await book(secondPatient, { doctorId: doctor.userId, dateTime: slot(20, 30) });
+    expect(res.status).toBe(201);
+  });
+
+  it('allows another doctor at the same time', async () => {
+    const res = await book(secondPatient, { doctorId: secondDoctor.userId, dateTime: slot(20) });
+    expect(res.status).toBe(201);
+  });
+
+  it('rejects rescheduling into a slot the doctor already has booked', async () => {
+    const created = await book(secondPatient, { doctorId: doctor.userId, dateTime: slot(23) });
+    expect(created.status).toBe(201);
+    const res = await request(app)
+      .patch(`/api/appointments/${created.body.appointment._id}`)
+      .set(authHeader(secondPatient.token))
+      .send({ dateTime: slot(20, 10) });
+    expect(res.status).toBe(409);
+  });
+
+  it('does not treat an appointment as conflicting with itself', async () => {
+    const res = await request(app)
+      .patch(`/api/appointments/${firstId}`)
+      .set(authHeader(patient.token))
+      .send({ dateTime: slot(20, 0), reason: 'Same slot, new reason' });
+    expect(res.status).toBe(200);
+    expect(res.body.appointment.reason).toBe('Same slot, new reason');
+  });
+
+  it('frees the slot once the appointment is cancelled', async () => {
+    const cancelled = await request(app)
+      .delete(`/api/appointments/${firstId}`)
+      .set(authHeader(patient.token));
+    expect(cancelled.status).toBe(200);
+    const res = await book(secondPatient, { doctorId: doctor.userId, dateTime: slot(20) });
+    expect(res.status).toBe(201);
   });
 });

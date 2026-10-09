@@ -11,6 +11,38 @@ export const canModifyAppointment = (user, appointment) => {
   return appointment.patientId?.toString() === user.userId;
 };
 
+const MS_PER_MINUTE = 60 * 1000;
+const DEFAULT_DURATION_MINUTES = 30;
+
+// Finds a scheduled appointment of this doctor whose time window
+// [dateTime, dateTime + duration) overlaps the requested one. Back-to-back
+// appointments (one ends exactly when the next starts) do not overlap.
+export const findDoctorConflict = async ({ doctorId, dateTime, duration, excludeId }) => {
+  const start = new Date(dateTime);
+  const end = new Date(start.getTime() + duration * MS_PER_MINUTE);
+  const query = {
+    doctorId,
+    status: 'scheduled',
+    dateTime: { $lt: end },
+    $expr: {
+      $gt: [
+        {
+          $add: [
+            '$dateTime',
+            { $multiply: [{ $ifNull: ['$duration', DEFAULT_DURATION_MINUTES] }, MS_PER_MINUTE] },
+          ],
+        },
+        start,
+      ],
+    },
+  };
+  if (excludeId) query._id = { $ne: excludeId };
+  return Appointment.findOne(query).select('_id dateTime duration');
+};
+
+const conflictResponse = (res) =>
+  res.status(409).json({ message: 'The doctor already has an appointment at that time' });
+
 // List doctors available for booking (patients need this to create an appointment)
 export const getDoctors = async (req, res) => {
   try {
@@ -41,11 +73,19 @@ export const getAppointments = async (req, res) => {
 
 export const createAppointment = async (req, res) => {
   try {
-    const { doctorId, dateTime, reason, duration = 30 } = req.body;
+    const { doctorId, dateTime, reason, duration = DEFAULT_DURATION_MINUTES } = req.body;
     const { userId } = req.user;
 
     if (!doctorId || !dateTime || !reason) {
       return res.status(400).json({ message: 'doctorId, dateTime, and reason are required' });
+    }
+    if (Number.isNaN(new Date(dateTime).getTime())) {
+      return res.status(400).json({ message: 'dateTime must be a valid date' });
+    }
+
+    // No double-booking: the doctor must be free for the whole slot.
+    if (await findDoctorConflict({ doctorId, dateTime, duration })) {
+      return conflictResponse(res);
     }
 
     const appointment = new Appointment({
@@ -122,9 +162,28 @@ export const updateAppointment = async (req, res) => {
       return res.status(403).json({ message: 'You can only change your own appointments' });
     }
 
-    if (dateTime !== undefined) appointment.dateTime = dateTime;
+    if (dateTime !== undefined) {
+      if (Number.isNaN(new Date(dateTime).getTime())) {
+        return res.status(400).json({ message: 'dateTime must be a valid date' });
+      }
+      appointment.dateTime = dateTime;
+    }
     if (reason !== undefined) appointment.reason = reason;
     if (status !== undefined) appointment.status = status;
+
+    // A rescheduled (or re-activated) appointment must not overlap another
+    // scheduled appointment of the same doctor. It never conflicts with itself.
+    const timeOrStatusChanged = dateTime !== undefined || status !== undefined;
+    if (timeOrStatusChanged && appointment.status === 'scheduled') {
+      const conflict = await findDoctorConflict({
+        doctorId: appointment.doctorId,
+        dateTime: appointment.dateTime,
+        duration: appointment.duration || DEFAULT_DURATION_MINUTES,
+        excludeId: appointment._id,
+      });
+      if (conflict) return conflictResponse(res);
+    }
+
     await appointment.save();
 
     logger.info(`Appointment updated: ${id}`);

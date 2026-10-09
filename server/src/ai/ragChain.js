@@ -3,6 +3,12 @@ import { config } from '../config/index.js';
 import { vectorStore } from '../services/vectorStoreService.js';
 import { llmClient } from './llmClient.js';
 
+// Returned (without calling the LLM) when no document chunk reaches the
+// similarity threshold (RAG_SIMILARITY_THRESHOLD, default 0.45).
+export const NOT_ENOUGH_INFORMATION_MESSAGE =
+  'There is not enough information in your documents to answer that. ' +
+  'Please upload the relevant report, or ask your doctor.';
+
 const CHAT_SYSTEM_PROMPT = `You are MedFlow AI, a careful medical assistant.
 Rules:
 - Answer ONLY using the patient documents provided in the context. If the context does not contain the answer, say you don't have enough information.
@@ -45,22 +51,31 @@ class RAGChain {
       );
       const bestScore = searchResults.results[0]?.score || 0;
 
-      const messages = [{ role: 'system', content: CHAT_SYSTEM_PROMPT }];
+      // Nothing in the patient's documents is similar enough: decline instead of
+      // letting the model answer from general knowledge. The LLM is not called.
+      if (relevant.length === 0) {
+        logger.info(
+          `🙅 Declining: best similarity ${bestScore.toFixed(3)} is below the threshold ${this.similarityThreshold}`
+        );
+        return {
+          success: true,
+          declined: true,
+          message: NOT_ENOUGH_INFORMATION_MESSAGE,
+          sourceDocuments: [],
+          confidence: bestScore,
+        };
+      }
 
-      if (relevant.length > 0) {
-        const context = relevant
-          .map((doc) => `Source: ${doc.metadata.fileName || 'Document'}\n${doc.text}`)
-          .join('\n\n---\n\n');
-        messages.push({
+      const context = relevant
+        .map((doc) => `Source: ${doc.metadata.fileName || 'Document'}\n${doc.text}`)
+        .join('\n\n---\n\n');
+      const messages = [
+        { role: 'system', content: CHAT_SYSTEM_PROMPT },
+        {
           role: 'user',
           content: `Patient documents:\n\n${context}\n\nQuestion: ${userMessage}`,
-        });
-      } else {
-        messages.push({
-          role: 'user',
-          content: `The patient has no relevant documents on file for this question. Question: ${userMessage}\n\nGive general guidance only, and clearly state you could not find this in their documents.`,
-        });
-      }
+        },
+      ];
 
       const response = await llmClient.chat(messages);
 
@@ -68,6 +83,7 @@ class RAGChain {
 
       return {
         success: true,
+        declined: false,
         message: response,
         sourceDocuments: relevant.map((doc) => ({
           fileName: doc.metadata.fileName || 'Document',

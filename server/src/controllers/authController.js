@@ -4,7 +4,7 @@ import { logger } from '../utils/logger.js';
 
 export const register = async (req, res) => {
   try {
-    const { email, password, name } = req.body;
+    const { email, password, name, phone } = req.body;
 
     // Public registration only creates patients. Doctor/admin accounts are
     // created by the seed script or an existing admin — otherwise anyone
@@ -23,7 +23,7 @@ export const register = async (req, res) => {
     }
 
     // Create user
-    const user = new User({ email, password, name, role });
+    const user = new User({ email, password, name, role, ...(phone && { phone }) });
     await user.save();
 
     // Generate tokens

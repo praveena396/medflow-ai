@@ -95,6 +95,11 @@ export const sendSMS = async (phoneNumber, message) => {
   }
 };
 
+// Short enough for a single SMS segment (160 characters) with typical names.
+export const appointmentReminderSms = ({ doctorName, dateTime }) =>
+  `MedFlow reminder: your appointment with ${doctorName} is on ` +
+  `${new Date(dateTime).toLocaleString()}. Please arrive 10 minutes early.`;
+
 const appointmentEmailBody = (heading, intro, details) => `
   <h2>${heading}</h2>
   <p>Dear ${details.patientName},</p>

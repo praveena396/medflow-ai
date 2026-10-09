@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from 'vitest';
 import request from 'supertest';
 
 // Queue jobs go to Redis in production; in tests we just record the calls.
@@ -47,6 +47,10 @@ describe('GET /api/appointments/doctors', () => {
 });
 
 describe('POST /api/appointments', () => {
+  beforeEach(() => {
+    enqueueNotification.mockClear();
+  });
+
   it('books an appointment and queues confirmation + reminder', async () => {
     const res = await request(app)
       .post('/api/appointments')
@@ -60,6 +64,26 @@ describe('POST /api/appointments', () => {
     const types = enqueueNotification.mock.calls.map(([payload]) => payload.type);
     expect(types).toContain('appointment-confirmation');
     expect(types).toContain('appointment-reminder');
+    // This patient has no phone number, so no SMS is queued.
+    expect(types).not.toContain('sms');
+  });
+
+  it('also queues an SMS reminder when the patient has a phone number', async () => {
+    const withPhone = await registerUser(app, { phone: '+15715550123' });
+    const res = await request(app)
+      .post('/api/appointments')
+      .set(authHeader(withPhone.token))
+      .send({ doctorId: doctor.userId, dateTime: slot(4), reason: 'Follow-up' });
+
+    expect(res.status).toBe(201);
+    expect(enqueueNotification).toHaveBeenCalledTimes(3);
+    const calls = enqueueNotification.mock.calls;
+    const sms = calls.find(([payload]) => payload.type === 'sms');
+    const emailReminder = calls.find(([payload]) => payload.type === 'appointment-reminder');
+    expect(sms[0].phoneNumber).toBe('+15715550123');
+    expect(sms[0].message).toMatch(/reminder/i);
+    // Sent at the same time as the email reminder.
+    expect(sms[1]).toEqual(emailReminder[1]);
   });
 
   it('rejects a booking with missing fields', async () => {

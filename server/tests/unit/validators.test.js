@@ -40,11 +40,19 @@ describe('register validation', () => {
     ['an invalid email', { ...valid, email: 'not-an-email' }, 'email', /valid email/i],
     ['a short password', { ...valid, password: 'short' }, 'password', /8 and 128/],
     ['a non-string password', { ...valid, password: 12345678 }, 'password', /text/],
+    ['a phone number without a country code', { ...valid, phone: '5715550123' }, 'phone', /international/],
   ])('rejects %s', async (_label, body, field, message) => {
     const res = await request(app).post('/register').send(body);
     expect(res.status).toBe(400);
     expect(res.body.message).toMatch(message);
     expect(res.body.errors.map((e) => e.field)).toContain(field);
+  });
+
+  it('accepts an E.164 phone number and treats an empty one as absent', async () => {
+    const withPhone = await request(app).post('/register').send({ ...valid, phone: '+15715550123' });
+    expect(withPhone.status).toBe(200);
+    const empty = await request(app).post('/register').send({ ...valid, phone: '' });
+    expect(empty.status).toBe(200);
   });
 });
 

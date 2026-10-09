@@ -1,6 +1,7 @@
 import { Appointment, User } from '../models/index.js';
 import { enqueueNotification } from '../queues/index.js';
 import { logger } from '../utils/logger.js';
+import { appointmentReminderSms } from '../services/notificationService.js';
 
 // Who may change an appointment: admins may change any; doctors only those
 // assigned to them; patients only their own. req.user comes from the verified JWT.
@@ -97,13 +98,15 @@ export const createAppointment = async (req, res) => {
     });
 
     await appointment.save();
-    await appointment.populate('patientId doctorId', 'name email');
+    await appointment.populate('patientId', 'name email phone');
+    await appointment.populate('doctorId', 'name email');
 
     logger.info(`Appointment created: ${appointment._id}`);
 
     // Queue confirmation email now, and a reminder 24h before the appointment
-    // (1h before if it is sooner than 24h away). Failures here must not
-    // break the booking itself.
+    // (1h before if it is sooner than 24h away). Patients with a phone number
+    // also get the reminder by SMS (SMS_DRIVER=mock logs it instead of sending).
+    // Failures here must not break the booking itself.
     try {
       const details = {
         patientName: appointment.patientId.name,
@@ -134,6 +137,17 @@ export const createAppointment = async (req, res) => {
           },
           { delayMs: reminderDelay }
         );
+
+        if (appointment.patientId.phone) {
+          await enqueueNotification(
+            {
+              type: 'sms',
+              phoneNumber: appointment.patientId.phone,
+              message: appointmentReminderSms(details),
+            },
+            { delayMs: reminderDelay }
+          );
+        }
       }
     } catch (notifyError) {
       logger.error('Failed to queue appointment notifications:', notifyError.message);

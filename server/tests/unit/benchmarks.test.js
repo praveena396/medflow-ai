@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { percentile, summarize } from '../../benchmarks/lib/stats.js';
 import { buildSamplePdf } from '../../benchmarks/lib/samplePdf.js';
-import { evaluateRetrieval } from '../../benchmarks/lib/retrievalEval.js';
+import { evaluateRetrieval, createMemoryIndex } from '../../benchmarks/lib/retrievalEval.js';
 import { extractText } from '../../src/utils/pdfExtractor.js';
 
 describe('benchmark stats', () => {
@@ -63,5 +63,20 @@ describe('retrieval evaluation', () => {
     expect(result.falseDeclineRate).toBeCloseTo(1 / 3, 3);
     expect(result.correctDeclineRate).toBe(1);
     expect(result.perQuery[0].rank).toBe(1);
+  });
+
+  it('runs through a custom index (as the ChromaDB benchmark does)', async () => {
+    const calls = { add: 0, search: 0 };
+    const memory = createMemoryIndex(embed);
+    const index = {
+      add: async (chunk) => { calls.add++; return memory.add(chunk); },
+      search: async (text, topK) => { calls.search++; return memory.search(text, topK); },
+    };
+    const queries = [{ question: 'my cholesterol?', expected: 'lipids' }];
+    const viaIndex = await evaluateRetrieval({ documents, queries, topK: 2, threshold: 0.5, index });
+    const viaEmbed = await evaluateRetrieval({ documents, queries, embed, topK: 2, threshold: 0.5 });
+    expect(calls).toEqual({ add: 3, search: 1 });
+    expect(viaIndex.hitRateAt1).toBe(1);
+    expect(viaIndex.perQuery).toEqual(viaEmbed.perQuery);
   });
 });

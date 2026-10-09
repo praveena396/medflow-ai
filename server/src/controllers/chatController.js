@@ -1,6 +1,7 @@
 import { ChatHistory } from '../models/index.js';
 import { ragChain } from '../ai/ragChain.js';
 import { logger } from '../utils/logger.js';
+import { recordAudit } from '../services/auditService.js';
 
 export const sendMessage = async (req, res) => {
   try {
@@ -45,6 +46,25 @@ export const sendMessage = async (req, res) => {
 
     // Save chat history
     await chatHistory.save();
+
+    // Every AI output is audited, including declines and failures.
+    await recordAudit({
+      req,
+      action: !ragResponse.success
+        ? 'ai.chat.error'
+        : ragResponse.declined
+          ? 'ai.chat.declined'
+          : 'ai.chat.answer',
+      targetType: 'chat',
+      targetId: chatHistory._id,
+      details: {
+        question: message,
+        answer: ragResponse.message,
+        confidence: ragResponse.confidence,
+        sources: (ragResponse.sourceDocuments || []).map((doc) => doc.fileName),
+        ...(ragResponse.error && { error: ragResponse.error }),
+      },
+    });
 
     logger.info(`💬 Chat message processed for user: ${userId}`);
 

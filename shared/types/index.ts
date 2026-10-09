@@ -7,9 +7,9 @@ export interface User {
   createdAt: Date;
 }
 
+// The refresh token is not in the body: the API sets it as an httpOnly cookie.
 export interface AuthResponse {
   token: string;
-  refreshToken: string;
   user: User;
 }
 

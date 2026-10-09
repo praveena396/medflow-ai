@@ -2,6 +2,8 @@ import { Appointment, User } from '../models/index.js';
 import { enqueueNotification } from '../queues/index.js';
 import { logger } from '../utils/logger.js';
 import { appointmentReminderSms } from '../services/notificationService.js';
+import { recordAudit, diffFields } from '../services/auditService.js';
+import { addVisitFromAppointment } from '../services/healthRecordService.js';
 
 // Who may change an appointment: admins may change any; doctors only those
 // assigned to them; patients only their own. req.user comes from the verified JWT.
@@ -166,7 +168,7 @@ export const createAppointment = async (req, res) => {
 export const updateAppointment = async (req, res) => {
   try {
     const { id } = req.params;
-    const { dateTime, reason, status } = req.body;
+    const { dateTime, reason, status, notes } = req.body;
 
     const appointment = await Appointment.findById(id);
     if (!appointment) {
@@ -175,6 +177,13 @@ export const updateAppointment = async (req, res) => {
     if (!canModifyAppointment(req.user, appointment)) {
       return res.status(403).json({ message: 'You can only change your own appointments' });
     }
+
+    // Only the doctor (or an admin) records how an appointment went.
+    if (req.user.role === 'patient' && ['completed', 'no-show'].includes(status)) {
+      return res.status(403).json({ message: 'Only the doctor can mark an appointment completed or no-show' });
+    }
+
+    const before = { dateTime: appointment.dateTime, reason: appointment.reason, status: appointment.status };
 
     if (dateTime !== undefined) {
       if (Number.isNaN(new Date(dateTime).getTime())) {
@@ -200,11 +209,38 @@ export const updateAppointment = async (req, res) => {
 
     await appointment.save();
 
+    // Completing an appointment adds a visit to the patient's health record.
+    let visitAdded = false;
+    if (before.status !== 'completed' && appointment.status === 'completed') {
+      const result = await addVisitFromAppointment(appointment, notes);
+      visitAdded = result.added;
+      if (visitAdded) {
+        await recordAudit({
+          req,
+          action: 'record.visit.add',
+          targetType: 'health-record',
+          targetId: result.record._id,
+          details: { patientId: appointment.patientId, appointmentId: appointment._id, source: 'appointment-completed' },
+        });
+      }
+    }
+
+    if (req.user.role === 'admin') {
+      await recordAudit({
+        req,
+        action: 'admin.appointment.update',
+        targetType: 'appointment',
+        targetId: appointment._id,
+        details: { changes: diffFields(before, appointment, ['dateTime', 'reason', 'status']) },
+      });
+    }
+
     logger.info(`Appointment updated: ${id}`);
 
     res.json({
       message: 'Appointment updated successfully',
       appointment,
+      visitAdded,
     });
   } catch (error) {
     logger.error('Update appointment error:', error.message);
@@ -224,8 +260,19 @@ export const cancelAppointment = async (req, res) => {
       return res.status(403).json({ message: 'You can only cancel your own appointments' });
     }
 
+    const previousStatus = appointment.status;
     appointment.status = 'cancelled';
     await appointment.save();
+
+    if (req.user.role === 'admin') {
+      await recordAudit({
+        req,
+        action: 'admin.appointment.cancel',
+        targetType: 'appointment',
+        targetId: appointment._id,
+        details: { changes: { status: { from: previousStatus, to: 'cancelled' } } },
+      });
+    }
 
     logger.info(`Appointment cancelled: ${id}`);
 

@@ -11,17 +11,34 @@ vi.mock('../../src/queues/index.js', () => ({
 
 import { enqueueDocumentProcessing } from '../../src/queues/index.js';
 import { createApp } from '../../src/app.js';
-import { setupTestDB, teardownTestDB, registerUser, authHeader } from '../helpers.js';
+import { setupTestDB, teardownTestDB, registerUser, createStaffUser, authHeader } from '../helpers.js';
 
 const app = createApp();
 let patient;
 let otherPatient;
+let imagePatient;
 let documentId;
+let doctor;
+let otherDoctor;
+let admin;
 
 beforeAll(async () => {
   await setupTestDB();
   patient = await registerUser(app);
   otherPatient = await registerUser(app);
+  imagePatient = await registerUser(app);
+  doctor = await createStaffUser(app, 'doctor');
+  otherDoctor = await createStaffUser(app, 'doctor');
+  admin = await createStaffUser(app, 'admin');
+  // The doctor becomes "the patient's doctor" by sharing an appointment.
+  await request(app)
+    .post('/api/appointments')
+    .set(authHeader(patient.token))
+    .send({
+      doctorId: doctor.userId,
+      dateTime: new Date(Date.now() + 3 * 24 * 3600 * 1000).toISOString(),
+      reason: 'Review lab results',
+    });
 });
 
 afterAll(async () => {
@@ -66,17 +83,18 @@ describe('POST /api/documents', () => {
     expect(res.status).toBe(400);
   });
 
-  it('rejects images, because OCR is not supported yet', async () => {
+  it('accepts PNG and JPEG images for OCR and queues processing', async () => {
     for (const [filename, contentType] of [
-      ['scan.png', 'image/png'],
-      ['scan.jpg', 'image/jpeg'],
+      ['lab-scan.png', 'image/png'],
+      ['prescription.jpg', 'image/jpeg'],
     ]) {
       const res = await request(app)
         .post('/api/documents')
-        .set(authHeader(patient.token))
-        .attach('file', Buffer.from('fake-image-bytes'), { filename, contentType });
-      expect(res.status).toBe(400);
-      expect(res.body.message).toMatch(/not allowed/);
+        .set(authHeader(imagePatient.token))
+        .field('documentType', 'prescription')
+        .attach('file', Buffer.from('image-bytes'), { filename, contentType });
+      expect(res.status).toBe(201);
+      expect(enqueueDocumentProcessing).toHaveBeenCalledWith(res.body.document.id);
     }
   });
 });
@@ -110,6 +128,49 @@ describe('GET /api/documents/:id/status', () => {
       .get(`/api/documents/${documentId}/status`)
       .set(authHeader(otherPatient.token));
     expect(res.status).toBe(404);
+  });
+});
+
+describe('downloading documents (local storage)', () => {
+  it('points the owner to the authenticated file route', async () => {
+    const res = await request(app)
+      .get(`/api/documents/${documentId}/download`)
+      .set(authHeader(patient.token));
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ mode: 'local', url: `/api/documents/${documentId}/file` });
+  });
+
+  it('streams the file with its original name to the owner', async () => {
+    const res = await request(app)
+      .get(`/api/documents/${documentId}/file`)
+      .set(authHeader(patient.token))
+      .buffer(true)
+      .parse((response, done) => {
+        let data = '';
+        response.on('data', (chunk) => (data += chunk));
+        response.on('end', () => done(null, data));
+      });
+    expect(res.status).toBe(200);
+    expect(res.headers['content-type']).toMatch(/^text\/plain/);
+    expect(res.headers['content-disposition']).toBe('attachment; filename="lab.txt"');
+    expect(res.headers['cache-control']).toBe('private, no-store');
+    expect(res.body).toBe('Cholesterol: 242 mg/dL. LDL: 165 mg/dL.');
+  });
+
+  it("lets the patient's doctor and an admin open it", async () => {
+    for (const user of [doctor, admin]) {
+      const res = await request(app).get(`/api/documents/${documentId}/file`).set(authHeader(user.token));
+      expect(res.status).toBe(200);
+    }
+  });
+
+  it('hides it from other patients, unrelated doctors and anonymous users', async () => {
+    for (const user of [otherPatient, otherDoctor]) {
+      const res = await request(app).get(`/api/documents/${documentId}/download`).set(authHeader(user.token));
+      expect(res.status).toBe(404);
+    }
+    expect((await request(app).get(`/api/documents/${documentId}/file`)).status).toBe(401);
+    expect((await request(app).get('/api/documents/not-an-id/file').set(authHeader(patient.token))).status).toBe(400);
   });
 });
 

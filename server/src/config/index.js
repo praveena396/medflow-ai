@@ -7,10 +7,27 @@ const num = (value, fallback) => {
   return Number.isFinite(parsed) ? parsed : fallback;
 };
 
+export const parseTrustProxy = (value) => {
+  if (value === undefined || value === '' || value === 'false') return false;
+  if (value === 'true') return true;
+  if (/^\d+$/.test(value)) return Number(value);
+  return value;
+};
+
 export const config = {
   env: process.env.NODE_ENV || 'development',
   isProduction: process.env.NODE_ENV === 'production',
   port: num(process.env.PORT, 5000),
+
+  // Set when the API runs behind a proxy or load balancer (Render, Fly,
+  // nginx) so req.ip and the per-IP rate limits see the real client:
+  // a hop count ("1"), "true", or a list of trusted addresses.
+  trustProxy: parseTrustProxy(process.env.TRUST_PROXY),
+
+  // Run the BullMQ workers inside the API process instead of a separate
+  // `npm run worker` process. Useful on hosts where a second process costs
+  // extra (e.g. a single Render web service).
+  runWorkersInProcess: process.env.RUN_WORKERS_IN_PROCESS === 'true',
 
   mongoUri: process.env.MONGO_URI || 'mongodb://localhost:27017/medflow',
 
@@ -19,6 +36,18 @@ export const config = {
     refreshSecret: process.env.JWT_REFRESH_SECRET,
     expiry: process.env.JWT_EXPIRY || '15m',
     refreshExpiry: process.env.JWT_REFRESH_EXPIRY || '7d',
+  },
+
+  // The refresh token travels only in this httpOnly cookie, scoped to the
+  // auth routes. SameSite=Strict works when the client and API share a site
+  // (localhost:3000 -> localhost:5000); use 'none' (which requires Secure)
+  // when they are on different sites, e.g. Vercel + Render.
+  refreshCookie: {
+    name: process.env.REFRESH_COOKIE_NAME || 'medflow_rt',
+    secure: process.env.REFRESH_COOKIE_SECURE !== 'false',
+    sameSite: (process.env.REFRESH_COOKIE_SAMESITE || 'strict').toLowerCase(),
+    path: '/api/auth',
+    domain: process.env.REFRESH_COOKIE_DOMAIN || undefined,
   },
 
   cors: {
@@ -30,6 +59,9 @@ export const config = {
   },
 
   redis: {
+    // A full URL wins over host/port/password. Use rediss:// for TLS, which
+    // hosted Redis such as Upstash requires.
+    url: process.env.REDIS_URL || undefined,
     host: process.env.REDIS_HOST || '127.0.0.1',
     port: num(process.env.REDIS_PORT, 6379),
     password: process.env.REDIS_PASSWORD || undefined,
@@ -51,10 +83,12 @@ export const config = {
     driver: process.env.FILE_STORAGE_TYPE || 'local',
     uploadDir: process.env.UPLOAD_DIR || './uploads',
     maxFileSizeBytes: num(process.env.MAX_FILE_SIZE, 10 * 1024 * 1024),
+    // Lifetime of S3 pre-signed download links, in seconds (15 minutes).
+    downloadUrlExpirySeconds: num(process.env.DOWNLOAD_URL_EXPIRY_SECONDS, 15 * 60),
     s3: {
       bucket: process.env.S3_BUCKET,
       region: process.env.S3_REGION || 'ap-south-1',
-      endpoint: process.env.S3_ENDPOINT, // set for MinIO / S3-compatible stores
+      endpoint: process.env.S3_ENDPOINT || undefined, // set for MinIO / R2 / S3-compatible stores
       accessKeyId: process.env.S3_ACCESS_KEY_ID,
       secretAccessKey: process.env.S3_SECRET_ACCESS_KEY,
     },
@@ -84,14 +118,16 @@ export const config = {
     max: num(process.env.RATE_LIMIT_MAX, 300),
     authWindowMs: num(process.env.AUTH_RATE_LIMIT_WINDOW_MS, 15 * 60 * 1000),
     authMax: num(process.env.AUTH_RATE_LIMIT_MAX, 20),
+    // Per signed-in user (not per IP) on /api/chat and /api/triage.
+    aiWindowMs: num(process.env.AI_RATE_LIMIT_WINDOW_MS, 60 * 1000),
+    aiMax: num(process.env.AI_RATE_LIMIT_MAX, 20),
   },
 
   documents: {
     chunkSizeWords: num(process.env.DOC_CHUNK_SIZE_WORDS, 500),
     chunkOverlapWords: num(process.env.DOC_CHUNK_OVERLAP_WORDS, 50),
-    // PDF and plain text only. Images (PNG/JPEG) need OCR, which isn't built yet,
-    // so they are rejected at upload instead of failing later in the worker.
-    allowedMimeTypes: ['application/pdf', 'text/plain'],
+    // PDFs with a text layer, plain text, and images (read with OCR in the worker).
+    allowedMimeTypes: ['application/pdf', 'text/plain', 'image/png', 'image/jpeg'],
   },
 };
 

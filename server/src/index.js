@@ -19,6 +19,15 @@ try {
 
 const app = createApp();
 
+// Optionally consume background jobs in this process (RUN_WORKERS_IN_PROCESS).
+let workers = [];
+if (config.runWorkersInProcess) {
+  const { startDocumentWorker } = await import('./workers/documentWorker.js');
+  const { startNotificationWorker } = await import('./workers/notificationWorker.js');
+  workers = [startDocumentWorker(), startNotificationWorker()];
+  logger.info('🧵 Background workers running inside the API process');
+}
+
 // Start Server
 const server = app.listen(config.port, () => {
   logger.info(`🚀 Server running on http://localhost:${config.port}`);
@@ -29,6 +38,11 @@ const server = app.listen(config.port, () => {
 const shutdown = async (signal) => {
   logger.info(`${signal} received — shutting down gracefully`);
   server.close(async () => {
+    if (workers.length) {
+      await Promise.all(workers.map((worker) => worker.close()));
+      const { shutdownOcr } = await import('./services/ocrService.js');
+      await shutdownOcr();
+    }
     await disconnectDB();
     redis.disconnect();
     process.exit(0);

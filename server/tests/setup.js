@@ -14,4 +14,6 @@ process.env.FILE_STORAGE_TYPE = 'local';
 process.env.UPLOAD_DIR = './uploads-test';
 process.env.RATE_LIMIT_MAX = '100000';
 process.env.AUTH_RATE_LIMIT_MAX = '100000';
+// Distinct value so tests can tell the per-user AI limiter's headers apart.
+process.env.AI_RATE_LIMIT_MAX = '99999';
 process.env.LOG_LEVEL = 'error';

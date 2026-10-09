@@ -17,6 +17,16 @@ export const validateEnv = () => {
 
   if (!config.mongoUri) errors.push('MONGO_URI is required');
 
+  if (!['strict', 'lax', 'none'].includes(config.refreshCookie.sameSite)) {
+    errors.push('REFRESH_COOKIE_SAMESITE must be strict, lax or none');
+  }
+  if (config.refreshCookie.sameSite === 'none' && !config.refreshCookie.secure) {
+    errors.push('REFRESH_COOKIE_SAMESITE=none requires REFRESH_COOKIE_SECURE=true (browsers reject it otherwise)');
+  }
+  if (config.isProduction && !config.refreshCookie.secure) {
+    warnings.push('REFRESH_COOKIE_SECURE=false sends the refresh cookie over plain HTTP; use it only for local development');
+  }
+
   if (config.llm.provider === 'openai' && !config.llm.openaiApiKey) {
     errors.push('OPENAI_API_KEY is required when LLM_PROVIDER=openai');
   }

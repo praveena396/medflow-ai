@@ -6,9 +6,12 @@ name: API benchmark
 #              MongoDB and Redis as service containers. The load generator and
 #              the server share one runner, so treat the numbers as a
 #              description of that environment, not of production.
-#   retrieval-and-pipeline: installs Ollama, pulls nomic-embed-text and runs
-#              benchmarks/retrieval-eval.js twice (MongoDB-equivalent ranking,
-#              then a ChromaDB service container) and
+#   retrieval-and-pipeline: installs Ollama, pulls nomic-embed-text and
+#              llama3.2, and runs benchmarks/retrieval-eval.js twice
+#              (MongoDB-equivalent ranking with the decline evaluation:
+#              grounding check plus a threshold calibrated on a separate
+#              question set; then retrieval only, through a ChromaDB service
+#              container) and
 #              benchmarks/document-pipeline.js (CPU only, so embedding is
 #              slower than on a GPU).
 # Each job prints its JSON results to the log and uploads them as an artifact.
@@ -129,7 +132,8 @@ jobs:
 
   retrieval-and-pipeline:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # The grounding check runs llama3.2 on the runner's CPU.
+    timeout-minutes: 60
 
     services:
       # For the second retrieval run (VECTOR_STORE=chroma).
@@ -146,6 +150,8 @@ jobs:
       LLM_PROVIDER: ollama
       OLLAMA_BASE_URL: http://127.0.0.1:11434
       LLM_EMBEDDING_MODEL: nomic-embed-text
+      LLM_CHAT_MODEL: llama3.2
+      LLM_TIMEOUT_MS: '300000'
       LOG_LEVEL: error
       MONGOMS_DISABLE_POSTINSTALL: '1'
       CHROMA_URL: http://localhost:8000
@@ -162,7 +168,7 @@ jobs:
       - name: Install dependencies
         run: npm ci --include=dev
 
-      - name: Install Ollama and pull the embedding model
+      - name: Install Ollama and pull the embedding and chat models
         run: |
           curl -fsSL https://ollama.com/install.sh | sh
           # The installer starts a systemd service on most runners; start one
@@ -175,10 +181,11 @@ jobs:
             sleep 1
           done
           ollama pull nomic-embed-text
+          ollama pull llama3.2
           ollama list
 
-      - name: Retrieval quality, MongoDB store (hit@4, hit@1, MRR)
-        run: npm run bench:retrieval -- --store=mongo
+      - name: Retrieval quality and declines, MongoDB store (hit@4, hit@1, MRR, decline rates)
+        run: npm run bench:retrieval -- --store=mongo --grounding --calibrate=benchmarks/data/decline-calibration.json
 
       - name: Wait for ChromaDB
         run: |

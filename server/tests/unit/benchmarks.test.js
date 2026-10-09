@@ -1,7 +1,14 @@
 import { describe, it, expect } from 'vitest';
 import { percentile, summarize } from '../../benchmarks/lib/stats.js';
 import { buildSamplePdf } from '../../benchmarks/lib/samplePdf.js';
-import { evaluateRetrieval, createMemoryIndex } from '../../benchmarks/lib/retrievalEval.js';
+import {
+  evaluateRetrieval,
+  createMemoryIndex,
+  thresholdSweep,
+  calibrateThreshold,
+  evaluateDeclines,
+  stripChunks,
+} from '../../benchmarks/lib/retrievalEval.js';
 import { extractText } from '../../src/utils/pdfExtractor.js';
 
 describe('benchmark stats', () => {
@@ -80,3 +87,91 @@ describe('retrieval evaluation', () => {
     expect(viaIndex.perQuery).toEqual(viaEmbed.perQuery);
   });
 });
+
+describe('decline evaluation', () => {
+  // Hand-made perQuery rows in evaluateRetrieval's shape.
+  const row = (question, expected, scores) => ({
+    question,
+    expected,
+    retrieved: scores.map((score, i) => ({ documentId: `d${i}`, score })),
+    chunks: scores.map((score, i) => ({ documentId: `d${i}`, score, text: `chunk ${i} for ${question}` })),
+  });
+  const perQuery = [
+    row('a1', 'd0', [0.8, 0.5]),
+    row('a2', 'd0', [0.6]),
+    row('a3', 'd0', [0.5]),
+    row('u1', null, [0.55]),
+    row('u2', null, [0.4]),
+  ];
+
+  it('sweeps similarity thresholds over both kinds of question', () => {
+    const sweep = thresholdSweep(perQuery, [0.45, 0.55, 0.7]);
+    expect(sweep).toEqual([
+      { threshold: 0.45, falseDeclineRate: 0, correctDeclineRate: 0.5 },
+      { threshold: 0.55, falseDeclineRate: 0.3333, correctDeclineRate: 0.5 },
+      { threshold: 0.7, falseDeclineRate: 0.6667, correctDeclineRate: 1 },
+    ]);
+  });
+
+  it('calibrates to the highest threshold within the false-decline limit', () => {
+    const sweep = thresholdSweep(perQuery, [0.45, 0.5, 0.55, 0.7]);
+    expect(calibrateThreshold(sweep, 0.05)).toBe(0.5);
+    expect(calibrateThreshold(sweep, 0.4)).toBe(0.55);
+    expect(calibrateThreshold(thresholdSweep(perQuery, [0.9]), 0.05)).toBeNull();
+  });
+
+  it('applies the threshold, then the grounding judge, like the chatbot', async () => {
+    const seen = [];
+    const judge = async (question, chunks) => {
+      seen.push([question, chunks.map((c) => c.documentId)]);
+      if (question === 'a3') return { grounded: null }; // unreadable: answer
+      return { grounded: question.startsWith('a') };
+    };
+    const cache = new Map();
+    const result = await evaluateDeclines(perQuery, { threshold: 0.45, judge, cache });
+
+    // Only chunks above the threshold reach the judge; u2 is declined first.
+    expect(seen).toEqual([
+      ['a1', ['d0', 'd1']],
+      ['a2', ['d0']],
+      ['a3', ['d0']],
+      ['u1', ['d0']],
+    ]);
+    expect(result.decisions.map((d) => d.decision)).toEqual([
+      'answer',
+      'answer',
+      'answer',
+      'not-grounded',
+      'low-similarity',
+    ]);
+    expect(result).toMatchObject({
+      falseDeclineRate: 0,
+      correctDeclineRate: 1,
+      falseDeclines: 0,
+      correctDeclines: 2,
+      judgeCalls: 4,
+      judgeUnreadable: 1,
+    });
+
+    // The same chunks are not judged twice.
+    const again = await evaluateDeclines(perQuery, { threshold: 0.45, judge, cache });
+    expect(again.judgeCalls).toBe(0);
+    expect(again.correctDeclineRate).toBe(1);
+  });
+
+  it('without a judge matches the similarity-only sweep', async () => {
+    const result = await evaluateDeclines(perQuery, { threshold: 0.55 });
+    const [sweep] = thresholdSweep(perQuery, [0.55]);
+    expect(result.groundingCheck).toBe(false);
+    expect(result.falseDeclineRate).toBe(sweep.falseDeclineRate);
+    expect(result.correctDeclineRate).toBe(sweep.correctDeclineRate);
+    expect(result.judgeCalls).toBeUndefined();
+  });
+
+  it('keeps chunk text out of saved results', async () => {
+    const stripped = stripChunks(perQuery);
+    expect(stripped[0].chunks).toBeUndefined();
+    expect(stripped[0].retrieved).toEqual(perQuery[0].retrieved);
+  });
+});
+

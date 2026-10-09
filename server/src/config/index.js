@@ -84,6 +84,9 @@ export const config = {
     max: num(process.env.RATE_LIMIT_MAX, 300),
     authWindowMs: num(process.env.AUTH_RATE_LIMIT_WINDOW_MS, 15 * 60 * 1000),
     authMax: num(process.env.AUTH_RATE_LIMIT_MAX, 20),
+    // Per signed-in user (not per IP) on /api/chat and /api/triage.
+    aiWindowMs: num(process.env.AI_RATE_LIMIT_WINDOW_MS, 60 * 1000),
+    aiMax: num(process.env.AI_RATE_LIMIT_MAX, 20),
   },
 
   documents: {

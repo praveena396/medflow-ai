@@ -7,6 +7,7 @@ import {
   validateUpdateAppointment,
   validateAppointmentId,
 } from '../../src/validators/appointmentValidators.js';
+import { validateChatMessage, validateTriage } from '../../src/validators/aiValidators.js';
 
 // A tiny app that runs only the validators and echoes back what reached the
 // handler, so these tests need no database.
@@ -117,5 +118,33 @@ describe('appointment update and cancel validation', () => {
     const res = await request(app).delete('/appointments/not-an-id');
     expect(res.status).toBe(400);
     expect(res.body.errors[0].field).toBe('id');
+  });
+});
+
+describe('chat and triage validation', () => {
+  const aiApp = express();
+  aiApp.use(express.json());
+  aiApp.post('/chat', validateChatMessage, (req, res) => res.json(req.body));
+  aiApp.post('/triage', validateTriage, (req, res) => res.json(req.body));
+
+  it('accepts a normal message and trims it', async () => {
+    const res = await request(aiApp).post('/chat').send({ message: '  what was my LDL?  ' });
+    expect(res.status).toBe(200);
+    expect(res.body.message).toBe('what was my LDL?');
+  });
+
+  it.each([
+    ['an empty message', { message: '   ' }],
+    ['a non-text message', { message: { $gt: '' } }],
+    ['a message over 2000 characters', { message: 'x'.repeat(2001) }],
+  ])('rejects %s', async (_label, body) => {
+    const res = await request(aiApp).post('/chat').send(body);
+    expect(res.status).toBe(400);
+  });
+
+  it('requires symptoms and limits the optional fields', async () => {
+    expect((await request(aiApp).post('/triage').send({})).status).toBe(400);
+    expect((await request(aiApp).post('/triage').send({ symptoms: 'cough', severity: 'x'.repeat(51) })).status).toBe(400);
+    expect((await request(aiApp).post('/triage').send({ symptoms: 'cough', duration: '3 days' })).status).toBe(200);
   });
 });

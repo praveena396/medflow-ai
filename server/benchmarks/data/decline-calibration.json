@@ -1,0 +1,150 @@
+{
+  "description": "Calibration set for the decline decision. Same documents as retrieval-eval.json, different questions, written without looking at any retrieval scores. Used only to choose RAG_SIMILARITY_THRESHOLD (benchmarks/retrieval-eval.js --calibrate); the test set (retrieval-eval.json) is never used for that. expected null = the documents do not contain the answer.",
+  "documentsFrom": "retrieval-eval.json",
+  "queries": [
+    {
+      "question": "What was my total cholesterol?",
+      "expected": "lipid-panel"
+    },
+    {
+      "question": "What was my HDL cholesterol?",
+      "expected": "lipid-panel"
+    },
+    {
+      "question": "What was my mean corpuscular volume?",
+      "expected": "cbc"
+    },
+    {
+      "question": "Was my white blood cell count normal?",
+      "expected": "cbc"
+    },
+    {
+      "question": "Was my free T4 low?",
+      "expected": "thyroid"
+    },
+    {
+      "question": "Were my thyroid antibodies positive?",
+      "expected": "thyroid"
+    },
+    {
+      "question": "When should my TSH be rechecked?",
+      "expected": "thyroid"
+    },
+    {
+      "question": "What was my fasting glucose?",
+      "expected": "diabetes"
+    },
+    {
+      "question": "What HbA1c should I aim for?",
+      "expected": "diabetes"
+    },
+    {
+      "question": "Was there fluid around my lungs on the X-ray?",
+      "expected": "chest-xray"
+    },
+    {
+      "question": "When should I have a follow-up X-ray?",
+      "expected": "chest-xray"
+    },
+    {
+      "question": "Why was I admitted to hospital in May?",
+      "expected": "discharge"
+    },
+    {
+      "question": "How long did I take oral antibiotics after leaving hospital?",
+      "expected": "discharge"
+    },
+    {
+      "question": "What dose of vitamin D should I take?",
+      "expected": "prescription"
+    },
+    {
+      "question": "Can I take iron with my thyroid medicine?",
+      "expected": "prescription"
+    },
+    {
+      "question": "Do I have any food allergies?",
+      "expected": "allergy"
+    },
+    {
+      "question": "Should I carry an epinephrine pen?",
+      "expected": "allergy"
+    },
+    {
+      "question": "What was my heart rate on the ECG?",
+      "expected": "cardiology"
+    },
+    {
+      "question": "Do I have any heart valve disease?",
+      "expected": "cardiology"
+    },
+    {
+      "question": "When was my last tetanus booster?",
+      "expected": "vaccination"
+    },
+    {
+      "question": "Have I finished my hepatitis B vaccinations?",
+      "expected": "vaccination"
+    },
+    {
+      "question": "What was my vitamin B12 level?",
+      "expected": null
+    },
+    {
+      "question": "What was my blood pressure at my last visit?",
+      "expected": null
+    },
+    {
+      "question": "What did my abdominal CT scan show?",
+      "expected": null
+    },
+    {
+      "question": "What did my urine test show?",
+      "expected": null
+    },
+    {
+      "question": "What was my bone density result?",
+      "expected": null
+    },
+    {
+      "question": "When is my next dental check-up?",
+      "expected": null
+    },
+    {
+      "question": "What is my eye glasses prescription?",
+      "expected": null
+    },
+    {
+      "question": "Were any polyps found on my colonoscopy?",
+      "expected": null
+    },
+    {
+      "question": "What was my PSA level?",
+      "expected": null
+    },
+    {
+      "question": "What is my BMI?",
+      "expected": null
+    },
+    {
+      "question": "What did my sleep study show?",
+      "expected": null
+    },
+    {
+      "question": "What is my insurance policy number?",
+      "expected": null
+    },
+    {
+      "question": "Which pharmacy do I use?",
+      "expected": null
+    },
+    {
+      "question": "What was my vitamin D blood level?",
+      "expected": null
+    },
+    {
+      "question": "What was my potassium level?",
+      "expected": null
+    }
+  ]
+}

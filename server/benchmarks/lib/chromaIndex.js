@@ -32,7 +32,7 @@ export const createChromaIndex = async (embed) => {
     async search(text, topK) {
       const result = await store.search(text, topK, { patientId: BENCH_PATIENT });
       if (!result.success) throw new Error(`Chroma search failed: ${result.error}`);
-      return result.results.map((r) => ({ documentId: r.documentId, score: r.score }));
+      return result.results.map((r) => ({ documentId: r.documentId, score: r.score, text: r.text }));
     },
     async close() {
       await store.client.deleteCollection({ name: store.collectionName }).catch(() => {});

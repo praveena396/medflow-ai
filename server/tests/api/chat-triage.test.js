@@ -90,7 +90,9 @@ describe('POST /api/chat', () => {
       embedding: Array(768).fill(0.1),
       fileName: 'lab-report.pdf',
     });
-    llmClient.chat.mockResolvedValueOnce('Your cholesterol was 242 mg/dL, which is high.');
+    llmClient.chat
+      .mockResolvedValueOnce('{"answerable": true}') // grounding check
+      .mockResolvedValueOnce('Your cholesterol was 242 mg/dL, which is high.');
 
     const res = await request(app)
       .post('/api/chat')
@@ -101,6 +103,25 @@ describe('POST /api/chat', () => {
     expect(res.body.response.declined).toBe(false);
     expect(res.body.response.text).toBe('Your cholesterol was 242 mg/dL, which is high.');
     expect(res.body.response.sourceDocuments[0].fileName).toBe('lab-report.pdf');
+    expect(res.body.response.declineReason).toBeUndefined();
+  });
+
+  it('declines when the closest document does not contain the answer (grounding check)', async () => {
+    // The chunk from the previous test is still a perfect similarity match.
+    llmClient.chat.mockClear();
+    llmClient.chat.mockResolvedValueOnce('{"answerable": false}');
+
+    const res = await request(app)
+      .post('/api/chat')
+      .set(authHeader(patient.token))
+      .send({ message: 'What did my knee MRI show?' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.response.declined).toBe(true);
+    expect(res.body.response.declineReason).toBe('not-grounded');
+    expect(res.body.response.text).toMatch(/not enough information in your documents/i);
+    expect(res.body.response.sourceDocuments).toEqual([]);
+    expect(llmClient.chat).toHaveBeenCalledTimes(1); // no answer was generated
   });
 
   it('rejects an empty message', async () => {

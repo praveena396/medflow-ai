@@ -3,9 +3,12 @@ import { sanitizeForPrompt } from './sanitize.js';
 import { config } from '../config/index.js';
 import { vectorStore } from '../services/vectorStoreService.js';
 import { llmClient } from './llmClient.js';
+import { checkGrounding } from './groundingCheck.js';
 
-// Returned (without calling the LLM) when no document chunk reaches the
-// similarity threshold (RAG_SIMILARITY_THRESHOLD, default 0.45).
+// Returned instead of an answer when no document chunk reaches the similarity
+// threshold (RAG_SIMILARITY_THRESHOLD, default 0.45; the LLM is not called),
+// or when the grounding check finds that the retrieved chunks don't contain
+// the answer (RAG_GROUNDING_CHECK, on by default).
 export const NOT_ENOUGH_INFORMATION_MESSAGE =
   'There is not enough information in your documents to answer that. ' +
   'Please upload the relevant report, or ask your doctor.';
@@ -37,6 +40,7 @@ const keywordUrgency = (symptoms) => {
 class RAGChain {
   constructor() {
     this.similarityThreshold = config.llm.similarityThreshold;
+    this.groundingCheck = config.llm.groundingCheck;
   }
 
   // Answer a patient question using their own uploaded documents as context.
@@ -64,10 +68,30 @@ class RAGChain {
         return {
           success: true,
           declined: true,
+          declineReason: 'low-similarity',
           message: NOT_ENOUGH_INFORMATION_MESSAGE,
           sourceDocuments: [],
           confidence: bestScore,
         };
+      }
+
+      // Similar is not the same as answering: a question about a knee MRI can
+      // sit close to a chest X-ray report. Ask the model, in a separate short
+      // JSON-only call, whether these excerpts state the answer. If its reply
+      // can't be read, keep the similarity-only decision and answer.
+      if (this.groundingCheck) {
+        const verdict = await checkGrounding(question, relevant);
+        if (verdict.grounded === false) {
+          logger.info(`🙅 Declining: the retrieved excerpts do not contain the answer (best similarity ${bestScore.toFixed(3)})`);
+          return {
+            success: true,
+            declined: true,
+            declineReason: 'not-grounded',
+            message: NOT_ENOUGH_INFORMATION_MESSAGE,
+            sourceDocuments: [],
+            confidence: bestScore,
+          };
+        }
       }
 
       // Document text is untrusted too (anyone can upload a file), so it is
@@ -169,6 +193,10 @@ class RAGChain {
 
   setSimilarityThreshold(threshold) {
     this.similarityThreshold = threshold;
+  }
+
+  setGroundingCheck(enabled) {
+    this.groundingCheck = Boolean(enabled);
   }
 }
 

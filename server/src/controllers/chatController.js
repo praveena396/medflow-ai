@@ -61,6 +61,7 @@ export const sendMessage = async (req, res) => {
         question: message,
         answer: ragResponse.message,
         confidence: ragResponse.confidence,
+        ...(ragResponse.declineReason && { declineReason: ragResponse.declineReason }),
         sources: (ragResponse.sourceDocuments || []).map((doc) => doc.fileName),
         ...(ragResponse.error && { error: ragResponse.error }),
       },
@@ -74,8 +75,11 @@ export const sendMessage = async (req, res) => {
         text: ragResponse.message,
         sourceDocuments: ragResponse.sourceDocuments,
         confidence: ragResponse.confidence,
-        // true when nothing in the patient's documents was similar enough to answer from
+        // true when the patient's documents don't contain an answer
         declined: ragResponse.declined === true,
+        // 'low-similarity' (nothing close enough) or 'not-grounded' (close, but
+        // the excerpts don't state the answer); absent when answered
+        ...(ragResponse.declineReason && { declineReason: ragResponse.declineReason }),
       },
     });
   } catch (error) {

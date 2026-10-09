@@ -4,7 +4,13 @@
 //   ollama pull nomic-embed-text      # once
 //   npm run bench:retrieval            # from server/
 //
-// (LLM_PROVIDER=openai with OPENAI_API_KEY works too.) Reports the top-4 hit
+// (LLM_PROVIDER=openai with OPENAI_API_KEY works too.)
+//
+// Vector store: the same as the app's VECTOR_STORE (mongo by default, which is
+// ranked in memory exactly as MongoDB's driver does), or pass --store=chroma
+// (or --store=mongo) to choose. Chroma needs a running server at CHROMA_URL.
+//
+// Reports the top-4 hit
 // rate (the source document is among the 4 chunks the chatbot would use),
 // hit@1, mean reciprocal rank, and how often the similarity threshold
 // (RAG_SIMILARITY_THRESHOLD) declines answerable vs unanswerable questions.
@@ -13,13 +19,17 @@
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { evaluateRetrieval } from './lib/retrievalEval.js';
+import { evaluateRetrieval, createMemoryIndex } from './lib/retrievalEval.js';
+import { createChromaIndex } from './lib/chromaIndex.js';
 import { writeResult } from './lib/results.js';
 import { llmClient } from '../src/ai/llmClient.js';
 import { config } from '../src/config/index.js';
 
 const DATA_FILE = path.join(path.dirname(fileURLToPath(import.meta.url)), 'data', 'retrieval-eval.json');
 const TOP_K = 4; // same as the chatbot (src/ai/ragChain.js)
+
+const storeArg = process.argv.find((arg) => arg.startsWith('--store='));
+const STORE = (storeArg ? storeArg.split('=')[1] : config.vectorStore.driver).toLowerCase();
 
 const pct = (value) => (value === null ? 'n/a' : `${(value * 100).toFixed(1)}%`);
 
@@ -38,13 +48,17 @@ const main = async () => {
       `${config.llm.embeddingModel} (threshold ${threshold}) ...\n`
   );
 
-  const result = await evaluateRetrieval({
-    documents,
-    queries,
-    topK: TOP_K,
-    threshold,
-    embed: (text) => llmClient.embed(text),
-  });
+  if (!['mongo', 'chroma'].includes(STORE)) throw new Error(`Unknown store "${STORE}" (use mongo or chroma)`);
+  const embed = (text) => llmClient.embed(text);
+  const index = STORE === 'chroma' ? await createChromaIndex(embed) : createMemoryIndex(embed);
+  console.log(`Vector store: ${index.name}\n`);
+
+  let result;
+  try {
+    result = await evaluateRetrieval({ documents, queries, topK: TOP_K, threshold, index });
+  } finally {
+    await index.close?.();
+  }
 
   console.table({
     [`hit rate @${TOP_K}`]: { value: pct(result.hitRateAtK) },
@@ -61,7 +75,8 @@ const main = async () => {
   }
 
   console.log(
-    `Saved ${writeResult('retrieval-eval', {
+    `Saved ${writeResult(`retrieval-eval-${STORE}`, {
+      vectorStore: STORE,
       provider: config.llm.provider,
       embeddingModel: config.llm.embeddingModel,
       dataFile: 'benchmarks/data/retrieval-eval.json',

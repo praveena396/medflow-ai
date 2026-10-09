@@ -82,7 +82,8 @@ It runs entirely on free, local services by default (Ollama, MongoDB, Redis). It
    |         |      llmClient (axios) -> Ollama or OpenAI        |          |
    |         |             |                       |             |          |
    +---- MongoDB (Mongoose): users, appointments, triage, chat, documents,  |
-         chunk embeddings, health records, append-only audit log  <---------+
+         chunk embeddings*, health records, append-only audit log  <--------+
+         (* or ChromaDB, with VECTOR_STORE=chroma)
                                    |                   |
                      BullMQ queues on Redis  <---------+
                                    |
@@ -94,7 +95,11 @@ It runs entirely on free, local services by default (Ollama, MongoDB, Redis). It
 ```
 
 - **LLM client:** one small axios wrapper (`server/src/ai/llmClient.js`) with the same chat and embedding calls for Ollama (`llama3.2`, `nomic-embed-text`) and OpenAI (`LLM_PROVIDER=openai`). No LangChain.
-- **Vector search:** chunk embeddings are stored in MongoDB (`DocumentChunk`). A query loads that patient's chunks and ranks them by cosine similarity in Node (`server/src/services/vectorStoreService.js`). That's simple and fine at the scale of one patient's documents; a vector index is on the roadmap.
+- **Vector search:** there are two drivers behind one interface, chosen with `VECTOR_STORE`.
+  - **`mongo` (default).** Chunk embeddings are stored in MongoDB (`DocumentChunk`). A query loads that patient's chunks and ranks them by cosine similarity in Node (`server/src/services/vectorStoreService.js`). That's simple and fine at the scale of one patient's documents.
+  - **`chroma`.** Chunks go into one [ChromaDB](https://www.trychroma.com) collection in cosine space, through the official `chromadb` client (`server/src/services/chromaVectorStore.js`). Each chunk carries `patientId` and `documentId` metadata, and every search filters on `patientId`, so one patient never retrieves another's text.
+  - **Same behaviour either way.** The score is the same cosine similarity (Chroma's `1 - distance`), so top-4, the threshold and declining work identically. Deleting a document deletes its vectors.
+  - **Switching stores** doesn't copy existing chunks; upload the documents again after you change it.
 - **Background work:** uploads return straight away with `processingStatus: "pending"`; the client polls `GET /api/documents/:id/status`. The workers run as a separate process (`npm run worker`) or, with `RUN_WORKERS_IN_PROCESS=true`, inside the API.
 
 ---
@@ -106,13 +111,13 @@ It runs entirely on free, local services by default (Ollama, MongoDB, Redis). It
 1. The file is read from storage (local disk or S3-compatible).
 2. Text is extracted: `pdf-parse` for PDFs, read directly for `.txt`, and tesseract.js OCR for PNG and JPEG images.
 3. The text is split into chunks of 500 words with a 50-word overlap (`DOC_CHUNK_SIZE_WORDS`, `DOC_CHUNK_OVERLAP_WORDS`).
-4. Each chunk is embedded (`nomic-embed-text` by default) and saved with the patient id and file name.
+4. Each chunk is embedded (`nomic-embed-text` by default) and saved with the patient id and file name, in MongoDB or ChromaDB (`VECTOR_STORE`).
 5. The LLM writes a short summary for the document list.
 
 **Query (chat)**
 
 1. The question is sanitised (see [Security](#security)) and embedded with the same model.
-2. The patient's chunks are ranked by cosine similarity, and the top 4 are kept.
+2. The patient's chunks are ranked by cosine similarity, and the top 4 are kept. With MongoDB this is computed in Node; with ChromaDB it is a filtered nearest-neighbour query.
 3. Chunks below `RAG_SIMILARITY_THRESHOLD` (default `0.45`) are dropped. If none are left, the API returns the "not enough information in your documents" message with `declined: true`, and the LLM is not called.
 4. Otherwise the remaining chunks go to the LLM inside `<documents>` tags and the question inside `<question>` tags, with a system prompt that tells it to answer only from those documents and to treat everything inside the tags as data, not instructions.
 5. The reply includes the source file names and similarity scores.
@@ -130,7 +135,7 @@ The right threshold depends on the embedding model; the default is `0.45`. `npm 
 | **AI / LLM** | Ollama `llama3.2` by default; OpenAI via `LLM_PROVIDER=openai`; plain axios client |
 | **Embeddings** | Ollama `nomic-embed-text` by default; OpenAI optional |
 | **OCR** | tesseract.js 6 with the bundled English model (`@tesseract.js-data/eng`) |
-| **Vector search** | Embeddings in MongoDB, cosine similarity computed in Node |
+| **Vector search** | Embeddings in MongoDB with cosine similarity computed in Node (default), or ChromaDB 1.5 via the `chromadb` client (`VECTOR_STORE=chroma`) |
 | **Database** | MongoDB 7 + Mongoose 7 |
 | **Auth** | JWT access token (15 min) in the response body; refresh token (7 days) in an httpOnly cookie; bcrypt password hashes |
 | **Validation** | express-validator on every route that takes input |
@@ -163,7 +168,7 @@ medflow-ai/
 │   │   ├── models/            # Mongoose schemas (incl. HealthRecord, AuditLog)
 │   │   ├── queues/            # BullMQ queues
 │   │   ├── routes/            # API routes
-│   │   ├── services/          # embeddings, vector search, storage, OCR, audit, health records, notifications
+│   │   ├── services/          # embeddings, vector stores (MongoDB, ChromaDB), storage, OCR, audit, health records, notifications
 │   │   ├── utils/             # logger, database, text extraction, chunking
 │   │   ├── validators/        # express-validator rules
 │   │   └── workers/           # document and notification workers
@@ -186,6 +191,7 @@ medflow-ai/
 - MongoDB (local Community Server, Docker, or a free Atlas cluster)
 - Redis (`redis-server`, Docker, or [Memurai](https://www.memurai.com) on Windows)
 - [Ollama](https://ollama.com) with two models: `ollama pull llama3.2` and `ollama pull nomic-embed-text`
+- Optional: [ChromaDB](https://docs.trychroma.com) if you set `VECTOR_STORE=chroma`, e.g. `docker run -p 8000:8000 chromadb/chroma:1.5.9` or `docker compose --profile chroma up -d chroma`; then set `CHROMA_URL=http://localhost:8000`
 
 OpenAI, S3, SMTP and Twilio are optional; each is switched on by a driver flag in `server/.env`. The OCR model ships with the `@tesseract.js-data/eng` package, so it needs no extra setup.
 
@@ -239,7 +245,13 @@ The API tests need Redis on `localhost:6379` (for the rate-limiter store). For M
 2. otherwise a throwaway in-memory MongoDB from `mongodb-memory-server` (it downloads a `mongod` binary on first run);
 3. otherwise `mongodb://localhost:27017/medflow-test`.
 
-GitHub Actions runs the same suite on every push and pull request, against MongoDB and Redis service containers ([workflow](.github/workflows/server-tests.yml)). A second workflow lints and builds the client ([workflow](.github/workflows/client.yml)):
+The ChromaDB integration test (`tests/integration/chroma.test.js`) runs only when `CHROMA_URL` points at a Chroma server; otherwise it is skipped:
+
+```bash
+CHROMA_URL=http://localhost:8000 npm test
+```
+
+GitHub Actions runs the same suite on every push and pull request, against MongoDB, Redis and ChromaDB service containers ([workflow](.github/workflows/server-tests.yml)). A second workflow lints and builds the client ([workflow](.github/workflows/client.yml)):
 
 ```bash
 cd client && npm run lint && npm run build
@@ -252,6 +264,9 @@ docker compose up -d
 # first run only: pull the models into the ollama container
 docker compose exec ollama ollama pull llama3.2
 docker compose exec ollama ollama pull nomic-embed-text
+
+# with the ChromaDB vector store (also set VECTOR_STORE=chroma in server/.env)
+docker compose --profile chroma up -d
 ```
 
 ---
@@ -322,7 +337,7 @@ The scripts live in [`server/benchmarks/`](server/benchmarks). Run them from `se
 |---|---|---|
 | `npm run bench:api` | [autocannon](https://github.com/mcollina/autocannon) against the non-AI routes (`GET /api`, `/api/appointments/doctors`, `/api/appointments`): requests per second and p50/p95/p99 latency at a set concurrency | A running API, MongoDB and Redis |
 | `npm run bench:pipeline` | The document worker's stages on a generated multi-page PDF (text extraction, chunking, embedding every chunk, and the total per page), plus OCR time for a generated image of a lab-report page | Nothing for `-- --no-embed`; Ollama (or OpenAI) for the embedding step |
-| `npm run bench:retrieval` | Top-4 hit rate, hit@1, mean reciprocal rank, and decline rates at the current threshold, on a small synthetic labelled set ([`benchmarks/data/retrieval-eval.json`](server/benchmarks/data/retrieval-eval.json)) | Ollama with `nomic-embed-text` (or OpenAI) |
+| `npm run bench:retrieval` | Top-4 hit rate, hit@1, mean reciprocal rank, and decline rates at the current threshold, on a small synthetic labelled set ([`benchmarks/data/retrieval-eval.json`](server/benchmarks/data/retrieval-eval.json)). `-- --store=mongo` (the default ranking) or `-- --store=chroma` (through the ChromaDB driver) | Ollama with `nomic-embed-text` (or OpenAI); a Chroma server for `--store=chroma` |
 
 ```bash
 # API load test: raise the per-IP limit, or most requests become 429s
@@ -335,13 +350,14 @@ npm run bench:pipeline -- --no-embed --no-ocr
 
 # Retrieval eval
 ollama pull nomic-embed-text
-npm run bench:retrieval
+npm run bench:retrieval                      # VECTOR_STORE, mongo by default
+npm run bench:retrieval -- --store=chroma    # needs CHROMA_URL
 ```
 
 The **API benchmark** workflow ([`.github/workflows/benchmark.yml`](.github/workflows/benchmark.yml)) is started by hand from the Actions tab, with a choice of concurrency and duration. It has two jobs:
 
 - `api-load` starts the API against MongoDB and Redis service containers and runs `bench:api`.
-- `retrieval-and-pipeline` installs Ollama, pulls `nomic-embed-text` and runs `bench:retrieval` and `bench:pipeline` on the runner's CPU.
+- `retrieval-and-pipeline` installs Ollama, pulls `nomic-embed-text` and runs `bench:pipeline` and `bench:retrieval` on the runner's CPU. The retrieval benchmark runs twice: once with the MongoDB ranking, and once against a ChromaDB service container.
 
 Both print their JSON results in the job log and upload them as an artifact. Everything runs on one shared GitHub-hosted runner per job, so those numbers describe that runner, not a production deployment.
 
@@ -419,7 +435,7 @@ Optional: set `EMAIL_DRIVER=smtp` with `SMTP_*`, and `SMS_DRIVER=twilio` with `T
 
 ## Roadmap
 
-Built: Vitest + Supertest unit and API tests and a client lint and build, run in CI on every push and pull request; OCR for images; a lightweight health record; an append-only audit log; httpOnly-cookie refresh tokens; per-user limits on the AI routes; prompt-injection hardening; pre-signed download URLs; deployment configuration.
+Built: Vitest + Supertest unit and API tests and a client lint and build, run in CI on every push and pull request; OCR for images; a lightweight health record; an append-only audit log; httpOnly-cookie refresh tokens; per-user limits on the AI routes; prompt-injection hardening; pre-signed download URLs; a ChromaDB vector store option; deployment configuration.
 
 Not built yet:
 
@@ -429,7 +445,7 @@ Not built yet:
 - [ ] Booking and rescheduling through the chatbot
 - [ ] Medication reminders
 - [ ] Hospital operations view (e.g. bed occupancy)
-- [ ] A vector index (e.g. MongoDB Atlas Vector Search) instead of in-process cosine similarity
+- [ ] An approximate-nearest-neighbour index in MongoDB (Atlas Vector Search) for the default store. ChromaDB is available today through `VECTOR_STORE=chroma`.
 - [ ] FHIR integration
 - [ ] Voice input for triage (Web Speech API)
 - [ ] Hindi and Telugu support

@@ -7,8 +7,10 @@ name: API benchmark
 #              the server share one runner, so treat the numbers as a
 #              description of that environment, not of production.
 #   retrieval-and-pipeline: installs Ollama, pulls nomic-embed-text and runs
-#              benchmarks/retrieval-eval.js and benchmarks/document-pipeline.js
-#              (CPU only, so embedding is slower than on a GPU).
+#              benchmarks/retrieval-eval.js twice (MongoDB-equivalent ranking,
+#              then a ChromaDB service container) and
+#              benchmarks/document-pipeline.js (CPU only, so embedding is
+#              slower than on a GPU).
 # Each job prints its JSON results to the log and uploads them as an artifact.
 on:
   workflow_dispatch:
@@ -129,6 +131,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
+    services:
+      # For the second retrieval run (VECTOR_STORE=chroma).
+      chroma:
+        image: chromadb/chroma:1.5.9
+        ports:
+          - 8000:8000
+
     defaults:
       run:
         working-directory: server
@@ -139,6 +148,7 @@ jobs:
       LLM_EMBEDDING_MODEL: nomic-embed-text
       LOG_LEVEL: error
       MONGOMS_DISABLE_POSTINSTALL: '1'
+      CHROMA_URL: http://localhost:8000
 
     steps:
       - uses: actions/checkout@v4
@@ -167,8 +177,19 @@ jobs:
           ollama pull nomic-embed-text
           ollama list
 
-      - name: Retrieval quality (hit@4, hit@1, MRR)
-        run: npm run bench:retrieval
+      - name: Retrieval quality, MongoDB store (hit@4, hit@1, MRR)
+        run: npm run bench:retrieval -- --store=mongo
+
+      - name: Wait for ChromaDB
+        run: |
+          for i in $(seq 1 60); do
+            if curl -fsS http://localhost:8000/api/v2/heartbeat > /dev/null; then echo "Chroma is up"; exit 0; fi
+            sleep 1
+          done
+          echo "Chroma did not start"; exit 1
+
+      - name: Retrieval quality, ChromaDB store (hit@4, hit@1, MRR)
+        run: npm run bench:retrieval -- --store=chroma
 
       - name: Document pipeline timing (20-page PDF, OCR of one image page)
         run: npm run bench:pipeline

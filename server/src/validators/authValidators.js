@@ -33,6 +33,13 @@ export const validateRegister = validate([
     .bail()
     .isLength({ min: 8, max: 128 })
     .withMessage('Password must be between 8 and 128 characters'),
+  // Optional; used for SMS appointment reminders. E.164 format, e.g. +15715550123.
+  body('phone')
+    .optional({ values: 'falsy' })
+    .isString()
+    .trim()
+    .matches(/^\+[1-9]\d{7,14}$/)
+    .withMessage('Phone must be in international format, e.g. +15715550123'),
 ]);
 
 export const validateLogin = validate([

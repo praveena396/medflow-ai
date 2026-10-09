@@ -39,6 +39,19 @@ describe('POST /api/auth/register', () => {
     expect(res.body.user.role).toBe('patient');
   });
 
+  it('stores an optional phone number for SMS reminders', async () => {
+    const { User } = await import('../../src/models/index.js');
+    const res = await request(app).post('/api/auth/register').send({
+      name: 'Phone User',
+      email: 'phone@medflow.test',
+      password: 'Secret@123',
+      phone: '+15715550123',
+    });
+    expect(res.status).toBe(201);
+    const stored = await User.findOne({ email: 'phone@medflow.test' });
+    expect(stored.phone).toBe('+15715550123');
+  });
+
   it('rejects a duplicate email', async () => {
     const res = await request(app).post('/api/auth/register').send({
       name: 'Alice Again',

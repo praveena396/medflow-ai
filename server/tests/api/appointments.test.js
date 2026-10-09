@@ -69,6 +69,25 @@ describe('POST /api/appointments', () => {
       .send({ reason: 'no doctor or time' });
     expect(res.status).toBe(400);
   });
+
+  it('rejects an invalid doctorId or a date in the past', async () => {
+    const badDoctor = await request(app)
+      .post('/api/appointments')
+      .set(authHeader(patient.token))
+      .send({ doctorId: 'not-an-id', dateTime: slot(30), reason: 'Bad doctor id' });
+    expect(badDoctor.status).toBe(400);
+
+    const past = await request(app)
+      .post('/api/appointments')
+      .set(authHeader(patient.token))
+      .send({
+        doctorId: doctor.userId,
+        dateTime: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+        reason: 'In the past',
+      });
+    expect(past.status).toBe(400);
+    expect(past.body.message).toMatch(/future/);
+  });
 });
 
 describe('GET /api/appointments', () => {
@@ -100,6 +119,13 @@ describe('DELETE /api/appointments/:id', () => {
       .delete('/api/appointments/64b000000000000000000000')
       .set(authHeader(patient.token));
     expect(res.status).toBe(404);
+  });
+
+  it('returns 400 for a malformed appointment id', async () => {
+    const res = await request(app)
+      .delete('/api/appointments/not-an-id')
+      .set(authHeader(patient.token));
+    expect(res.status).toBe(400);
   });
 });
 

@@ -7,6 +7,11 @@ import {
   getDoctors,
 } from '../controllers/appointmentController.js';
 import { authenticateToken } from '../middleware/auth.js';
+import {
+  validateCreateAppointment,
+  validateUpdateAppointment,
+  validateAppointmentId,
+} from '../validators/appointmentValidators.js';
 
 const router = express.Router();
 
@@ -17,8 +22,8 @@ router.use(authenticateToken);
 router.get('/doctors', getDoctors);
 
 router.get('/', getAppointments);
-router.post('/', createAppointment);
-router.patch('/:id', updateAppointment);
-router.delete('/:id', cancelAppointment);
+router.post('/', validateCreateAppointment, createAppointment);
+router.patch('/:id', validateUpdateAppointment, updateAppointment);
+router.delete('/:id', validateAppointmentId, cancelAppointment);
 
 export default router;

@@ -21,6 +21,7 @@ import healthRecordRoutes from './routes/healthRecordRoutes.js';
 // a port — so tests can exercise it in memory and index.js can start it.
 export const createApp = () => {
   const app = express();
+  if (config.trustProxy) app.set('trust proxy', config.trustProxy);
 
   // Middleware
   app.use(helmet());

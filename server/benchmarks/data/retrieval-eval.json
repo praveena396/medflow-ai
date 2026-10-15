@@ -1,5 +1,5 @@
 {
-  "description": "Small synthetic labelled set for the retrieval eval (benchmarks/retrieval-eval.js). The documents are invented sample records, not real patient data. 'expected' is the id of the document that answers the question, or null when no document does (the chatbot should decline).",
+  "description": "Labelled test set for the retrieval and refusal eval (benchmarks/retrieval-eval.js). All documents are synthetic sample records invented for this project; no real patient data is used, and the questions were written from the text of these documents. 'expected' is the id of the document that answers the question; 'expected': null means no document contains the answer, so the chatbot should refuse. Many of the null questions are deliberate near-misses: topically close to a document (a pending test, a neighbouring value, a different scan of the same organ) but not answered by it, which is what a similarity-only retriever gets wrong. Questions in this file do not appear in decline-calibration.json, which is the only set used to choose a threshold.",
   "documents": [
     {
       "id": "lipid-panel",
@@ -165,6 +165,322 @@
     },
     {
       "question": "What were my liver enzyme results?",
+      "expected": null
+    },
+    {
+      "question": "Was statin therapy discussed with me?",
+      "expected": "lipid-panel"
+    },
+    {
+      "question": "Was I given any diet advice about my cholesterol?",
+      "expected": "lipid-panel"
+    },
+    {
+      "question": "What date was my lipid panel taken?",
+      "expected": "lipid-panel"
+    },
+    {
+      "question": "Which cholesterol value was flagged in the comment on my lipid panel?",
+      "expected": "lipid-panel"
+    },
+    {
+      "question": "What was my haematocrit?",
+      "expected": "cbc"
+    },
+    {
+      "question": "Which blood test is being done next after my blood count?",
+      "expected": "cbc"
+    },
+    {
+      "question": "Is my anaemia thought to be from iron deficiency?",
+      "expected": "cbc"
+    },
+    {
+      "question": "When was my complete blood count done?",
+      "expected": "cbc"
+    },
+    {
+      "question": "Are my red blood cells smaller than normal?",
+      "expected": "cbc"
+    },
+    {
+      "question": "Do I have Hashimoto thyroiditis?",
+      "expected": "thyroid"
+    },
+    {
+      "question": "Was levothyroxine suggested for me?",
+      "expected": "thyroid"
+    },
+    {
+      "question": "Is my hypothyroidism subclinical?",
+      "expected": "thyroid"
+    },
+    {
+      "question": "What date was my thyroid function test?",
+      "expected": "thyroid"
+    },
+    {
+      "question": "Is my HbA1c above the target?",
+      "expected": "diabetes"
+    },
+    {
+      "question": "Do I need a foot examination?",
+      "expected": "diabetes"
+    },
+    {
+      "question": "When was my diabetes review appointment?",
+      "expected": "diabetes"
+    },
+    {
+      "question": "Was my metformin dose changed?",
+      "expected": "diabetes"
+    },
+    {
+      "question": "How many times a day do I take metformin?",
+      "expected": "diabetes"
+    },
+    {
+      "question": "Which lobe of my lung was affected on the X-ray?",
+      "expected": "chest-xray"
+    },
+    {
+      "question": "Was my heart size normal on the chest X-ray?",
+      "expected": "chest-xray"
+    },
+    {
+      "question": "Do I have pneumonia?",
+      "expected": "chest-xray"
+    },
+    {
+      "question": "What was the indication for my chest X-ray?",
+      "expected": "chest-xray"
+    },
+    {
+      "question": "What does the patchy consolidation on my X-ray mean?",
+      "expected": "chest-xray"
+    },
+    {
+      "question": "Which intravenous antibiotic did I get in hospital?",
+      "expected": "discharge"
+    },
+    {
+      "question": "What oral antibiotic was I sent home with?",
+      "expected": "discharge"
+    },
+    {
+      "question": "Was I breathing room air when I was discharged?",
+      "expected": "discharge"
+    },
+    {
+      "question": "What date was I discharged?",
+      "expected": "discharge"
+    },
+    {
+      "question": "What should I take my ferrous sulfate with?",
+      "expected": "prescription"
+    },
+    {
+      "question": "What time of day should I take my atorvastatin?",
+      "expected": "prescription"
+    },
+    {
+      "question": "Can I take my iron tablets together with antacids?",
+      "expected": "prescription"
+    },
+    {
+      "question": "What dose of ferrous sulfate was prescribed?",
+      "expected": "prescription"
+    },
+    {
+      "question": "What date was my prescription written?",
+      "expected": "prescription"
+    },
+    {
+      "question": "What reaction did I have to penicillin?",
+      "expected": "allergy"
+    },
+    {
+      "question": "Am I allergic to latex?",
+      "expected": "allergy"
+    },
+    {
+      "question": "How severe is my penicillin allergy?",
+      "expected": "allergy"
+    },
+    {
+      "question": "In which year did I react to penicillin?",
+      "expected": "allergy"
+    },
+    {
+      "question": "When was my allergy record last updated?",
+      "expected": "allergy"
+    },
+    {
+      "question": "Was my heart rhythm normal?",
+      "expected": "cardiology"
+    },
+    {
+      "question": "Are my extra heartbeats dangerous?",
+      "expected": "cardiology"
+    },
+    {
+      "question": "Was I told to cut down on caffeine?",
+      "expected": "cardiology"
+    },
+    {
+      "question": "What did my echocardiogram show?",
+      "expected": "cardiology"
+    },
+    {
+      "question": "When did I have my COVID-19 booster?",
+      "expected": "vaccination"
+    },
+    {
+      "question": "Is there a vaccine I have not had yet?",
+      "expected": "vaccination"
+    },
+    {
+      "question": "Have I had a whooping cough vaccine?",
+      "expected": "vaccination"
+    },
+    {
+      "question": "What was my ferritin result?",
+      "expected": null
+    },
+    {
+      "question": "What was my LDL on the repeat lipid panel?",
+      "expected": null
+    },
+    {
+      "question": "Did my follow-up chest X-ray show the pneumonia had cleared?",
+      "expected": null
+    },
+    {
+      "question": "What was my TSH when it was rechecked six weeks later?",
+      "expected": null
+    },
+    {
+      "question": "What dose of levothyroxine am I taking?",
+      "expected": null
+    },
+    {
+      "question": "What did my annual diabetic eye screening show?",
+      "expected": null
+    },
+    {
+      "question": "What did my diabetic foot examination find?",
+      "expected": null
+    },
+    {
+      "question": "When is my pneumococcal vaccine appointment booked for?",
+      "expected": null
+    },
+    {
+      "question": "What was my HbA1c before this one?",
+      "expected": null
+    },
+    {
+      "question": "How many days was I in hospital for?",
+      "expected": null
+    },
+    {
+      "question": "What was my temperature when I was admitted?",
+      "expected": null
+    },
+    {
+      "question": "What was my respiratory rate at discharge?",
+      "expected": null
+    },
+    {
+      "question": "What was my oxygen saturation when I was admitted?",
+      "expected": null
+    },
+    {
+      "question": "How many premature ventricular contractions did the Holter monitor count?",
+      "expected": null
+    },
+    {
+      "question": "What was my left atrial size on the echocardiogram?",
+      "expected": null
+    },
+    {
+      "question": "How many atorvastatin tablets were dispensed?",
+      "expected": null
+    },
+    {
+      "question": "How much caffeine a day am I allowed?",
+      "expected": null
+    },
+    {
+      "question": "Which hospital was I admitted to?",
+      "expected": null
+    },
+    {
+      "question": "Which doctor signed my discharge summary?",
+      "expected": null
+    },
+    {
+      "question": "Am I allergic to aspirin?",
+      "expected": null
+    },
+    {
+      "question": "Do I take any blood pressure medication?",
+      "expected": null
+    },
+    {
+      "question": "Have I had a chickenpox vaccine?",
+      "expected": null
+    },
+    {
+      "question": "Did I have any side effects from the COVID-19 booster?",
+      "expected": null
+    },
+    {
+      "question": "Was I skin-tested for my penicillin allergy?",
+      "expected": null
+    },
+    {
+      "question": "What did my thyroid ultrasound show?",
+      "expected": null
+    },
+    {
+      "question": "What did my chest CT scan show?",
+      "expected": null
+    },
+    {
+      "question": "What was my cardiac MRI result?",
+      "expected": null
+    },
+    {
+      "question": "Was a cardiac stress test done?",
+      "expected": null
+    },
+    {
+      "question": "What were my lung function test results?",
+      "expected": null
+    },
+    {
+      "question": "What was my serum iron level?",
+      "expected": null
+    },
+    {
+      "question": "What was my folate level?",
+      "expected": null
+    },
+    {
+      "question": "What was my creatinine?",
+      "expected": null
+    },
+    {
+      "question": "What is my kidney function blood test result?",
+      "expected": null
+    },
+    {
+      "question": "What was my fasting insulin level?",
+      "expected": null
+    },
+    {
+      "question": "What is my height?",
       "expected": null
     }
   ]

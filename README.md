@@ -11,9 +11,9 @@
 ╚═╝     ╚═╝╚══════╝╚═════╝ ╚═╝     ╚══════╝ ╚═════╝  ╚══╝╚══╝     ╚═╝  ╚═╝╚═╝
 ```
 
-**Healthcare Automation Platform**
+**A health chatbot that refuses to answer when the patient's own documents don't support the question**
 
-*AI symptom triage · Appointment scheduling · A document-grounded health chatbot*
+*Grounded retrieval · Measured refusals · Tested in CI · Plus the clinic workflow around it*
 
 <br/>
 
@@ -27,7 +27,7 @@
 
 <br/>
 
-[Features](#features) · [Architecture](#architecture) · [Setup](#setup) · [API](#api-reference) · [Benchmarks](#benchmarks) · [Deploy](#deploy) · [Roadmap](#roadmap)
+[Grounded retrieval](#the-core-a-chatbot-that-declines) · [Features](#features) · [Architecture](#architecture) · [Setup](#setup) · [API](#api-reference) · [Benchmarks](#benchmarks) · [Deploy](#deploy) · [Roadmap](#roadmap)
 
 <br/>
 
@@ -35,11 +35,32 @@
 
 ---
 
-## What is MedFlow AI?
+> ### Synthetic data only
+>
+> **Every patient record, document, lab value and eval question in this repository is synthetic — invented for this project. No real patient data is used anywhere: not in the seed script, not in the test fixtures, not in the benchmark question sets.** The sample records in [`server/benchmarks/data/`](server/benchmarks/data) and the accounts created by `npm run seed` are made up, and the app has never been pointed at a real clinical system.
 
-MedFlow AI is a full-stack healthcare workflow app: patients triage their symptoms, book appointments, upload medical reports (including photos of lab results and prescriptions) and ask questions about them; doctors manage their appointments and keep a lightweight health record for each of their patients; admins see summary numbers, the appointment queue, the user list and an audit log.
+---
 
-The chatbot uses **retrieval-augmented generation (RAG)**: it answers from the patient's own uploaded documents. If nothing in those documents is similar enough to the question, it says so and does not ask the model at all.
+## The core: a chatbot that declines
+
+The interesting part of this project is not that an LLM answers questions about a patient's documents. It is that it **stops**.
+
+A similarity score only tells you a chunk of text is *about* something close to the question. It cannot tell you the chunk contains the answer — "what did my knee MRI show?" lands comfortably close to a chest X-ray report, and a similarity-only RAG system will happily write a confident answer from it. In a medical setting that failure mode is the one that matters, so the chat route has two gates in front of the model, and both can refuse before any answer is generated:
+
+1. **Similarity floor.** The patient's 4 most similar chunks are retrieved; any chunk below `RAG_SIMILARITY_THRESHOLD` is dropped. If nothing is left, the API returns `declined: true` with `declineReason: "low-similarity"` and the LLM is never called.
+2. **Grounding check** (`RAG_GROUNDING_CHECK`, on by default). The chat model gets the question and the surviving chunks in a separate, short, temperature-0, JSON-only request and answers one narrow question: do these excerpts actually state the thing being asked for? On `false` the API declines with `declineReason: "not-grounded"`. If the reply can't be parsed or the call fails, it falls back to the similarity-only decision rather than refusing silently.
+
+Only then does the question reach the LLM, with a prompt that restricts it to those chunks, and the reply carries the source file names and scores. Every answer and every refusal is written to the append-only audit log.
+
+Because "it refuses correctly" is a claim, not a feeling, it is measured rather than asserted. [`npm run bench:retrieval`](#the-retrieval-and-refusal-eval) runs a labelled set of synthetic documents and **110 questions — 69 answerable with a known source document and 41 that the documents genuinely do not answer**, most of them deliberate near-misses (a test the records say is pending, a value next to one that is recorded, a different scan of an organ the records do cover). One run reports retrieval hit@1 and hit@4 on the answerable set, the correct-refusal rate on the unanswerable set, and the over-refusal rate on the answerable set — each as a rate *and* the counts behind it. The similarity threshold can be calibrated on a [separate question set](server/benchmarks/data/decline-calibration.json), never on the test set. No expected results are hard-coded, and no figures are quoted in this README: [Benchmarks](#the-retrieval-and-refusal-eval) has the command, and the numbers belong to whoever runs it, with the machine they ran it on.
+
+**Tests and CI.** [![Server tests](https://github.com/praveena396/medflow-ai/actions/workflows/server-tests.yml/badge.svg)](https://github.com/praveena396/medflow-ai/actions/workflows/server-tests.yml) Vitest unit tests and Supertest API tests cover the decline logic, the grounding-verdict parser, prompt sanitising, the access rules, the rate limits and the audit log's append-only behaviour, and they run on every push and pull request against MongoDB, Redis and ChromaDB service containers. The client is linted and built in a second workflow. See [Test](#5-test).
+
+---
+
+## What else is in it
+
+Around that core, MedFlow AI is a full-stack healthcare workflow app: patients triage their symptoms, book appointments, upload medical reports (including photos of lab results and prescriptions) and ask questions about them; doctors manage their appointments and keep a lightweight health record for each of their patients; admins see summary numbers, the appointment queue, the user list and an audit log.
 
 It runs entirely on free, local services by default (Ollama, MongoDB, Redis). It is not deployed anywhere yet; [Deploy](#deploy) lists the exact steps for free hosted services.
 
@@ -51,13 +72,13 @@ It runs entirely on free, local services by default (Ollama, MongoDB, Redis). It
 
 | Feature | What the code does |
 |---|---|
+| **Document-grounded chatbot** | Retrieves the patient's 4 most similar chunks. If none reaches `RAG_SIMILARITY_THRESHOLD` (default `0.45`), or a short grounding check finds that the chunks don't contain the answer (`RAG_GROUNDING_CHECK`, on by default), it replies "There is not enough information in your documents to answer that…" with `declined: true` and a `declineReason` (`low-similarity` or `not-grounded`). Otherwise the LLM answers from those chunks only, and the reply lists the source files. Answers and declines are written to the audit log. |
+| **Document processing** | PDF, plain-text, PNG and JPEG uploads. A BullMQ worker extracts the text (`pdf-parse` for PDFs, [tesseract.js](https://github.com/naptha/tesseract.js) OCR for images, with the English model bundled so nothing is downloaded at run time), splits it into 500-word chunks with a 50-word overlap, embeds each chunk, stores the chunks, and writes a short AI summary. The document list shows how the text was read and the OCR confidence. A PDF with no text layer (a scan) fails with a message asking for the pages as images; see [Roadmap](#roadmap). |
+| **Document downloads** | With S3 storage, the API hands out a pre-signed GET URL that expires after 15 minutes (`DOWNLOAD_URL_EXPIRY_SECONDS`). With local storage, the file is streamed through an authenticated route. Either way the same access rules as the health record apply. |
+| **Audit log** | An append-only collection of AI outputs (chat answers, declines and errors; triage results) and admin and clinical actions (user role or status changes, appointment changes and cancellations by an admin, CSV exports, health-record edits and new visits). The model refuses every update and delete path. Admins read it at `/admin/audit` with filters for action, actor, target and date. |
 | **AI symptom triage** | The LLM classifies free-text symptoms as `low`, `medium`, `high` or `critical` (temperature 0, JSON output; "when in doubt, choose the higher urgency"). If the reply can't be parsed, keyword rules decide. Next steps come from a fixed table per urgency. Results are saved to the patient's triage history and the audit log. |
 | **Appointment scheduling** | Patients pick a doctor and a time in the UI. The API rejects a booking or reschedule that overlaps another `scheduled` appointment for the same doctor (`409`), and the booking screen says the slot is taken. Patients can change only their own appointments, doctors only those assigned to them, admins any. Only the doctor or an admin can mark an appointment completed or no-show. |
 | **Health record (lightweight EHR)** | One record per patient: allergies (with reaction and severity), current medications, notes, visit history and links to the patient's uploaded documents. The patient reads their own record; a doctor reads and edits the records of patients they have an appointment with; an admin can read any. When a doctor marks an appointment completed, a visit is added to the record (once per appointment), with optional visit notes. |
-| **Document processing** | PDF, plain-text, PNG and JPEG uploads. A BullMQ worker extracts the text (`pdf-parse` for PDFs, [tesseract.js](https://github.com/naptha/tesseract.js) OCR for images, with the English model bundled so nothing is downloaded at run time), splits it into 500-word chunks with a 50-word overlap, embeds each chunk, stores the chunks, and writes a short AI summary. The document list shows how the text was read and the OCR confidence. A PDF with no text layer (a scan) fails with a message asking for the pages as images; see [Roadmap](#roadmap). |
-| **Document downloads** | With S3 storage, the API hands out a pre-signed GET URL that expires after 15 minutes (`DOWNLOAD_URL_EXPIRY_SECONDS`). With local storage, the file is streamed through an authenticated route. Either way the same access rules as the health record apply. |
-| **Document-grounded chatbot** | Retrieves the patient's 4 most similar chunks. If none reaches `RAG_SIMILARITY_THRESHOLD` (default `0.45`), or a short grounding check finds that the chunks don't contain the answer (`RAG_GROUNDING_CHECK`, on by default), it replies "There is not enough information in your documents to answer that…" with `declined: true` and a `declineReason` (`low-similarity` or `not-grounded`). Otherwise the LLM answers from those chunks only, and the reply lists the source files. Answers and declines are written to the audit log. |
-| **Audit log** | An append-only collection of AI outputs (chat answers, declines and errors; triage results) and admin and clinical actions (user role or status changes, appointment changes and cancellations by an admin, CSV exports, health-record edits and new visits). The model refuses every update and delete path. Admins read it at `/admin/audit` with filters for action, actor, target and date. |
 | **Notifications** | Booking queues a confirmation email straight away and a reminder 24 h before (1 h before for appointments less than a day away). Patients with a phone number (optional at registration) also get the reminder by SMS. Email defaults to Ethereal test inboxes and SMS to a mock driver that only logs. SMTP and Twilio are switched on in `.env`. |
 | **Admin dashboard** | Counts of users by role, appointments by status and triage results by urgency, plus the upcoming-appointment queue, a searchable user list where accounts can be deactivated and reactivated, a CSV export of appointments and the audit log. |
 | **Role-based access** | Patient, doctor and admin roles. The role is read from the verified JWT on the server; public registration always creates a patient. |
@@ -66,32 +87,53 @@ It runs entirely on free, local services by default (Ollama, MongoDB, Redis). It
 
 ## Architecture
 
-```
-                     Next.js 16 client (React 19, Tailwind 4)
-                                   |
-                 HTTPS / REST (refresh token in an httpOnly cookie)
-                                   |
-          Express API: helmet, CORS allowlist, Redis-backed rate limits
-          (per IP, and per user on the AI routes), JWT auth + role checks,
-          express-validator, prompt sanitising
-                                   |
-   +---------+-------------+-------------+---------+-------------+----------+
-   |         |             |             |         |             |          |
-  Auth  Appointments   Chat (RAG)     Triage   Documents   Health records  Admin
-   |         |             |             |         |             |          |
-   |         |      llmClient (axios) -> Ollama or OpenAI        |          |
-   |         |             |                       |             |          |
-   +---- MongoDB (Mongoose): users, appointments, triage, chat, documents,  |
-         chunk embeddings*, health records, append-only audit log  <--------+
-         (* or ChromaDB, with VECTOR_STORE=chroma)
-                                   |                   |
-                     BullMQ queues on Redis  <---------+
-                                   |
-        Workers: document processing (extract or OCR -> chunk -> embed -> summary)
-                 notifications (Nodemailer email, Twilio or mock SMS)
-                                   |
-         File storage: local disk (streamed by the API) or S3-compatible
-                       (pre-signed download URLs)
+```mermaid
+flowchart TB
+    UI["Next.js 16 client<br/>React 19, Tailwind 4<br/>Triage, Appointments, Chat, Documents, Records, Admin"]
+    UI -->|"HTTPS REST, refresh token in an httpOnly cookie"| EDGE
+
+    subgraph api["Express API"]
+        direction TB
+        EDGE["helmet, CORS allowlist, Redis-backed rate limits<br/>per IP and per user on the AI routes<br/>JWT auth and role checks, express-validator, prompt sanitising"]
+        EDGE --> REST["Auth, Appointments, Triage,<br/>Documents, Health records, Admin"]
+        EDGE --> CHAT["Chat route"]
+    end
+
+    CHAT --> RETR
+
+    subgraph grounded["Grounded chat: two gates before the model"]
+        direction TB
+        RETR["Retrieve the patient's 4 most similar chunks"]
+        RETR --> SIM{"Any chunk above<br/>RAG_SIMILARITY_THRESHOLD?"}
+        SIM -->|no| DECL1["Decline: low-similarity<br/>the LLM is never called"]
+        SIM -->|yes| GROUND{"Grounding check:<br/>do these excerpts state the answer?"}
+        GROUND -->|no| DECL2["Decline: not-grounded"]
+        GROUND -->|"yes, or reply unreadable"| ANSWER["Answer from those chunks only,<br/>with source file names and scores"]
+    end
+
+    RETR --> VEC
+    GROUND --> LLM
+    ANSWER --> LLM
+    REST --> LLM
+    LLM["llmClient: one axios wrapper"] --> PROV["Ollama llama3.2 and nomic-embed-text,<br/>or OpenAI"]
+
+    REST --> MONGO
+    DECL1 --> AUDIT
+    DECL2 --> AUDIT
+    ANSWER --> AUDIT
+
+    MONGO[("MongoDB via Mongoose<br/>users, appointments, triage,<br/>chat, documents, health records")]
+    AUDIT[("Append-only audit log:<br/>every AI answer, decline and admin change")]
+    VEC[("Chunk embeddings<br/>MongoDB DocumentChunk by default,<br/>or ChromaDB with VECTOR_STORE=chroma")]
+
+    REST -->|"upload returns immediately"| Q(["BullMQ queues on Redis"])
+    Q --> W1["Document worker<br/>extract or OCR, chunk, embed, summarise"]
+    Q --> W2["Notification worker<br/>Nodemailer email, Twilio or mock SMS"]
+    W1 --> VEC
+    W1 --> LLM
+    W1 --> FILES
+    REST --> FILES
+    FILES[("File storage<br/>local disk, or S3-compatible<br/>with pre-signed download URLs")]
 ```
 
 - **LLM client:** one small axios wrapper (`server/src/ai/llmClient.js`) with the same chat and embedding calls for Ollama (`llama3.2`, `nomic-embed-text`) and OpenAI (`LLM_PROVIDER=openai`). No LangChain.
@@ -123,7 +165,13 @@ It runs entirely on free, local services by default (Ollama, MongoDB, Redis). It
 5. Otherwise the remaining chunks go to the LLM inside `<documents>` tags and the question inside `<question>` tags, with a system prompt that tells it to answer only from those documents and to treat everything inside the tags as data, not instructions.
 6. The reply includes the source file names and similarity scores.
 
-The right threshold depends on the embedding model; the default is `0.45`. `npm run bench:retrieval -- --grounding --calibrate=benchmarks/data/decline-calibration.json` shows how often unanswerable questions are declined and how often answerable ones are wrongly declined, with and without the grounding check, and suggests a threshold calibrated on a separate question set.
+The right threshold depends on the embedding model; the default is `0.45`. One command measures what it costs and what it buys:
+
+```bash
+cd server && npm run bench:retrieval -- --grounding --calibrate=benchmarks/data/decline-calibration.json
+```
+
+That reports retrieval hit@1 and hit@4 on the answerable questions, the correct-refusal rate on the unanswerable ones and the over-refusal rate on the answerable ones — with and without the grounding check, each with the counts behind it — and suggests a threshold calibrated on a separate question set. See [Benchmarks](#the-retrieval-and-refusal-eval) for what the set contains and how to read the output.
 
 ---
 
@@ -334,11 +382,13 @@ What is implemented:
 
 The scripts live in [`server/benchmarks/`](server/benchmarks). Run them from `server/`. Results are written as JSON to `server/benchmarks/results/` (git-ignored) together with the machine details. **Any figures quoted for this project should come from these scripts, along with the environment they ran in.** None are recorded here.
 
+> **How to read the load-test numbers.** The one `bench:api` run this project has done so far was on a **single GitHub-hosted GitHub Actions runner with the load generator, the API, MongoDB and Redis all on that same runner** (the `api-load` job below, autocannon at 50 connections). That means the client competes with the server for the same two cores and nothing crosses a network, so the throughput and p95 from that run describe *that* arrangement. It is a **relative benchmark** — useful for comparing one commit against another on the same setup — and **not a capacity claim** for a real deployment. The same applies to `bench:retrieval` and `bench:pipeline`, which run the embedding and chat models on the runner's CPU with no GPU.
+
 | Command | Measures | Needs |
 |---|---|---|
 | `npm run bench:api` | [autocannon](https://github.com/mcollina/autocannon) against the non-AI routes (`GET /api`, `/api/appointments/doctors`, `/api/appointments`): requests per second and p50/p95/p99 latency at a set concurrency | A running API, MongoDB and Redis |
 | `npm run bench:pipeline` | The document worker's stages on a generated multi-page PDF (text extraction, chunking, embedding every chunk, and the total per page), plus OCR time for a generated image of a lab-report page | Nothing for `-- --no-embed`; Ollama (or OpenAI) for the embedding step |
-| `npm run bench:retrieval` | Top-4 hit rate, hit@1, mean reciprocal rank, and decline rates at the current threshold, on a small synthetic labelled set ([`benchmarks/data/retrieval-eval.json`](server/benchmarks/data/retrieval-eval.json)). `-- --store=mongo` (the default ranking) or `-- --store=chroma` (through the ChromaDB driver). `-- --grounding` adds the grounding check to the decline decision; `-- --calibrate=<file>` picks the highest threshold in 0.30-0.70 that wrongly declines at most 5% of the answerable questions in a separate set ([`benchmarks/data/decline-calibration.json`](server/benchmarks/data/decline-calibration.json)) and reports it on the test set. Each decline row shows unanswerable questions declined and answerable questions declined | Ollama with `nomic-embed-text` (or OpenAI), plus `llama3.2` for `--grounding`; a Chroma server for `--store=chroma` |
+| `npm run bench:retrieval` | **Retrieval and refusal quality** on the labelled synthetic set ([`benchmarks/data/retrieval-eval.json`](server/benchmarks/data/retrieval-eval.json)): hit@1 and hit@4 on the answerable questions, the correct-refusal rate on the unanswerable ones, the over-refusal rate on the answerable ones, and mean reciprocal rank — each printed as a percentage *and* the counts behind it. `-- --store=mongo` (the default ranking) or `-- --store=chroma` (through the ChromaDB driver). `-- --grounding` adds the grounding check to the refusal decision, so the two gates can be compared. `-- --calibrate=<file>` picks the highest threshold in 0.30-0.70 that wrongly refuses at most 5% of the answerable questions in a **separate** set ([`benchmarks/data/decline-calibration.json`](server/benchmarks/data/decline-calibration.json)) and then reports it on the test set; the test set is never used to choose a threshold | Ollama with `nomic-embed-text` (or OpenAI), plus `llama3.2` for `--grounding`; a Chroma server for `--store=chroma` |
 
 ```bash
 # API load test: raise the per-IP limit, or most requests become 429s
@@ -349,17 +399,47 @@ npm run bench:api                       # terminal 2; BENCH_CONNECTIONS=50 BENCH
 npm run bench:pipeline
 npm run bench:pipeline -- --no-embed --no-ocr
 
-# Retrieval eval
+# Retrieval and refusal eval — the full version is one command.
+# Once: the embedding model, and the chat model for the grounding check.
 ollama pull nomic-embed-text
-npm run bench:retrieval                      # VECTOR_STORE, mongo by default
-npm run bench:retrieval -- --store=chroma    # needs CHROMA_URL
-ollama pull llama3.2                         # for the grounding check
+ollama pull llama3.2
+
+cd server
 npm run bench:retrieval -- --grounding --calibrate=benchmarks/data/decline-calibration.json
+
+# Shorter variants
+npm run bench:retrieval                      # retrieval + similarity-only refusals, VECTOR_STORE (mongo by default)
+npm run bench:retrieval -- --store=chroma    # same, through the ChromaDB driver; needs CHROMA_URL
+npm run bench:retrieval -- --data=<file>     # a different question set, path relative to server/
 ```
+
+### The retrieval and refusal eval
+
+One run of
+
+```bash
+cd server && npm run bench:retrieval -- --grounding --calibrate=benchmarks/data/decline-calibration.json
+```
+
+prints, each labelled and each with its counts:
+
+| Reported | On | Meaning |
+|---|---|---|
+| **hit@1** | the answerable questions | the source document was ranked first |
+| **hit@4** | the answerable questions | the source document was among the 4 chunks the chatbot would use |
+| **mean reciprocal rank** | the answerable questions | average of 1/rank of the source document |
+| **correct refusal rate** (true positives) | the unanswerable questions | the chatbot declined, as it should |
+| **over-refusal rate** (false refusals) | the answerable questions | the chatbot declined although the answer was retrievable |
+
+The last two are reported twice: for the similarity threshold alone, and for the similarity threshold followed by the grounding check, so the second gate's contribution — and its cost in over-refusals — is visible rather than assumed.
+
+The question set is [`benchmarks/data/retrieval-eval.json`](server/benchmarks/data/retrieval-eval.json): 10 synthetic documents and 110 questions, 69 of them answerable with a labelled source document and 41 that the documents genuinely do not answer. The unanswerable block is mostly **near-misses** — a test the records say is pending but whose result is absent (`"What was my ferritin result?"`), a value next to one that is recorded (`"What was my oxygen saturation when I was admitted?"`, where only the discharge figure exists), a different scan of an organ the records do cover (`"What did my thyroid ultrasound show?"`), an allergen not on the allergy list (`"Am I allergic to aspirin?"`). Those are the questions a similarity-only system answers confidently and wrongly. Every question was written from the text of these documents, and `tests/unit/benchmarks.test.js` checks the labels themselves: every non-null `expected` names a real document, no question is duplicated, and no test question also appears in the calibration set.
+
+No expected results are hard-coded anywhere, the thresholds are not tuned on the test set, and **no figures from this eval are quoted in this README** — run it and read the table, with the machine you ran it on. The documents are synthetic and the set is small, so treat the output as a sanity check on this configuration, not a general accuracy claim.
 
 The **API benchmark** workflow ([`.github/workflows/benchmark.yml`](.github/workflows/benchmark.yml)) is started by hand from the Actions tab, with a choice of concurrency and duration. It has two jobs:
 
-- `api-load` starts the API against MongoDB and Redis service containers and runs `bench:api`.
+- `api-load` starts the API against MongoDB and Redis service containers and runs `bench:api`. The load generator, the API, MongoDB and Redis are all on that one runner, which is where the only numbers this project has were measured — see the note at the top of this section.
 - `retrieval-and-pipeline` installs Ollama, pulls `nomic-embed-text` and `llama3.2` and runs `bench:pipeline` and `bench:retrieval` on the runner's CPU. The retrieval benchmark runs twice: once with the MongoDB ranking plus the decline evaluation (`--grounding --calibrate=…`), and once against a ChromaDB service container.
 
 Both print their JSON results in the job log and upload them as an artifact. Everything runs on one shared GitHub-hosted runner per job, so those numbers describe that runner, not a production deployment.
@@ -438,7 +518,7 @@ Optional: set `EMAIL_DRIVER=smtp` with `SMTP_*`, and `SMS_DRIVER=twilio` with `T
 
 ## Roadmap
 
-Built: Vitest + Supertest unit and API tests and a client lint and build, run in CI on every push and pull request; OCR for images; a lightweight health record; an append-only audit log; httpOnly-cookie refresh tokens; per-user limits on the AI routes; prompt-injection hardening; pre-signed download URLs; a ChromaDB vector store option; deployment configuration.
+Built: Vitest + Supertest unit and API tests and a client lint and build, run in CI on every push and pull request; a two-gate grounded chat route with a 110-question retrieval and refusal eval behind it; OCR for images; a lightweight health record; an append-only audit log; httpOnly-cookie refresh tokens; per-user limits on the AI routes; prompt-injection hardening; pre-signed download URLs; a ChromaDB vector store option; deployment configuration.
 
 Not built yet:
 

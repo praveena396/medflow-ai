@@ -12,6 +12,10 @@
 //   - over-refusal rate on the answerable questions (refused although the
 //     answer was retrieved), for similarity only and for similarity plus the
 //     grounding check
+// With --grounding it also prints a diagnostic block for every wrong decision
+// on the test set: the question, the judge's raw reply, and the retrieved text
+// the judge was shown (each truncated), so one run explains itself without a
+// second round trip against the live model.
 // Nothing here is tuned to the test set and no expected result is hard-coded:
 // the threshold comes from RAG_SIMILARITY_THRESHOLD, or from the calibration
 // set when --calibrate is given.
@@ -54,6 +58,8 @@ import {
   calibrateThreshold,
   evaluateDeclines,
   stripChunks,
+  stripDecisionContext,
+  formatWrongDecisions,
 } from './lib/retrievalEval.js';
 import { createChromaIndex } from './lib/chromaIndex.js';
 import { writeResult } from './lib/results.js';
@@ -63,6 +69,10 @@ import { config } from '../src/config/index.js';
 
 const BENCH_DIR = path.dirname(fileURLToPath(import.meta.url));
 const TOP_K = 4; // same as the chatbot (src/ai/ragChain.js)
+// The records in the data files are ~40 words each and DOC_CHUNK_SIZE_WORDS is
+// 500, so the chunker emits one chunk per document ("10 documents, 10 chunks").
+// That is intended here: each synthetic record is a single short report, and
+// the judge sees it whole rather than a fragment of it.
 const MAX_CALIBRATION_FALSE_DECLINE = 0.05;
 const SWEEP = Array.from({ length: 41 }, (_, i) => Number((0.3 + i * 0.01).toFixed(2))); // 0.30 .. 0.70
 
@@ -192,12 +202,12 @@ const main = async () => {
   );
   console.table(Object.fromEntries(Object.entries(declines).map(([name, r]) => [name, declineRow(r)])));
   if (judge) {
+    // One run has to explain itself: for every wrong decision, print the
+    // question, what the judge actually replied, and the text it was given.
+    // Truncated so the block stays readable; the saved JSON keeps the verdicts.
     for (const [name, r] of Object.entries(declines).filter(([n, row]) => row.groundingCheck && n.startsWith('test'))) {
-      const wrong = r.decisions.filter((d) => (d.expected ? d.decision !== 'answer' : d.decision === 'answer'));
-      if (wrong.length) {
-        console.log(`${name}, wrong decisions:`);
-        for (const d of wrong) console.log(`  - ${d.question} (${d.expected ? 'answerable, declined' : 'unanswerable, answered'})`);
-      }
+      const lines = formatWrongDecisions(name, r.decisions);
+      if (lines.length) console.log(`\n${lines.join('\n')}\n`);
     }
   }
 
@@ -212,7 +222,7 @@ const main = async () => {
       ...summary,
       perQuery: stripChunks(perQuery),
       ...(calibration && { calibration: { ...calibration, perQuery: stripChunks(calibration.perQuery) } }),
-      declines,
+      declines: stripDecisionContext(declines),
     })}`
   );
 };

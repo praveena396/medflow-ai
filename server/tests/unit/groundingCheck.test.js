@@ -61,3 +61,64 @@ describe('checkGrounding', () => {
     expect(await checkGrounding('q', chunks)).toEqual({ grounded: null, error: 'timeout' });
   });
 });
+
+// The judge used to decline questions whose answer was plainly in the records
+// (19 of 69 answerable benchmark questions) because the prompt asked whether
+// the excerpts "explicitly state" the answer and listed "the excerpts are
+// about a different test" as a reason to refuse - which is true of three of
+// the four chunks top-4 retrieval always returns. These assertions pin the
+// question the prompt now asks, in both directions.
+describe('GROUNDING_SYSTEM_PROMPT', () => {
+  it('asks whether the answer is present, not whether the records are complete', () => {
+    expect(GROUNDING_SYSTEM_PROMPT).toMatch(/is the answer to the patient's question written somewhere in the excerpts/i);
+    expect(GROUNDING_SYSTEM_PROMPT).toMatch(/not judging whether the records are complete/i);
+    expect(GROUNDING_SYSTEM_PROMPT).not.toMatch(/fully support/i);
+    expect(GROUNDING_SYSTEM_PROMPT).not.toMatch(/only if the excerpts explicitly state/i);
+  });
+
+  it('tells the judge that unrelated excerpts are normal and one match is enough', () => {
+    expect(GROUNDING_SYSTEM_PROMPT).toMatch(/most of them will be about something else; that is normal/i);
+    expect(GROUNDING_SYSTEM_PROMPT).toMatch(/One excerpt containing the fact is enough/i);
+    expect(GROUNDING_SYSTEM_PROMPT).toMatch(/worded differently/i);
+  });
+
+  it('keeps the near-misses in the unanswerable set as reasons to decline', () => {
+    expect(GROUNDING_SYSTEM_PROMPT).toMatch(/still pending or "to follow"/i); // a result not reported yet
+    expect(GROUNDING_SYSTEM_PROMPT).toMatch(/not appearing in a list is not an answer/i); // an allergy not listed
+    expect(GROUNDING_SYSTEM_PROMPT).toMatch(/different time point or event/i); // admitted vs discharge
+    expect(GROUNDING_SYSTEM_PROMPT).toMatch(/does not contain the specific number, dose, date or amount/i);
+  });
+
+  it('still asks for a JSON-only verdict and no outside knowledge', () => {
+    expect(GROUNDING_SYSTEM_PROMPT).toMatch(/ONLY a JSON object/);
+    expect(GROUNDING_SYSTEM_PROMPT).toMatch(/\{"answerable": true\}/);
+    expect(GROUNDING_SYSTEM_PROMPT).toMatch(/Do not use outside medical knowledge/);
+  });
+});
+
+// Both directions through checkGrounding, with the benchmark's own records as
+// the excerpts: an answer that is plainly there must not be declined, and a
+// near-miss must be.
+describe('checkGrounding on the benchmark records', () => {
+  const record = (fileName, text) => ({ text, metadata: { fileName } });
+  const DIABETES = record('diabetes.pdf', 'Diabetes review, 20 April 2026. HbA1c 7.4 percent. Current medication metformin 500 mg twice daily, increased to 1000 mg twice daily.');
+  const ALLERGY = record('allergy.pdf', 'Allergy record. Penicillin: hives and facial swelling (severe). Sulfa drugs: rash. Latex: mild contact dermatitis. No known food allergies.');
+  const CBC = record('cbc.pdf', 'Complete blood count, 12 March 2026. Haemoglobin 10.9 g/dL (low). Impression: microcytic anaemia, likely iron deficiency. Ferritin to follow.');
+
+  it.each([
+    ['how many times a day do I take metformin', [DIABETES, CBC], true],
+    ['am I allergic to latex', [ALLERGY, DIABETES], true],
+    ['what was my ferritin result', [CBC, DIABETES], false], // pending, not reported
+    ['am I allergic to aspirin', [ALLERGY, CBC], false], // not in the allergy list
+  ])('passes the verdict for %j straight through as %s', async (question, chunks, verdict) => {
+    llmClient.chat.mockResolvedValue(`{"answerable": ${verdict}}`);
+
+    const result = await checkGrounding(question, chunks);
+
+    expect(result.grounded).toBe(verdict);
+    const [messages] = llmClient.chat.mock.calls[0];
+    // The judge sees every retrieved excerpt, each with its source, once.
+    for (const chunk of chunks) expect(messages[1].content).toContain(chunk.text);
+    expect(messages[1].content).toContain(`<question>\n${question}\n</question>`);
+  });
+});

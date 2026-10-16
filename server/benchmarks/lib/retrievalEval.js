@@ -146,6 +146,8 @@ export const evaluateDeclines = async (perQuery, { threshold, judge, cache = new
     const above = q.chunks.filter((c) => c.score >= threshold);
     let decision = 'answer';
     let verdict;
+    let raw;
+    let context;
     if (above.length === 0) {
       decision = 'low-similarity';
     } else if (judge) {
@@ -155,11 +157,21 @@ export const evaluateDeclines = async (perQuery, { threshold, judge, cache = new
         cache.set(key, await judge(q.question, above));
         timings.push(Date.now() - start);
       }
-      verdict = cache.get(key).grounded;
+      const judged = cache.get(key);
+      verdict = judged.grounded;
+      // Kept so one run can explain every wrong decision: the judge's own
+      // words and the text it was shown (see stripDecisionContext).
+      raw = judged.raw ?? judged.error ?? null;
+      context = above.map((c) => ({ documentId: c.documentId, score: Number(c.score.toFixed(4)), text: c.text }));
       if (verdict === null) unreadable++;
       if (verdict === false) decision = 'not-grounded';
     }
-    decisions.push({ question: q.question, expected: q.expected, decision, ...(judge && { verdict: verdict ?? null }) });
+    decisions.push({
+      question: q.question,
+      expected: q.expected,
+      decision,
+      ...(judge && { verdict: verdict ?? null, raw: raw ?? null, context: context ?? [] }),
+    });
   }
   const answerable = decisions.filter((d) => d.expected);
   const unanswerable = decisions.filter((d) => !d.expected);
@@ -180,4 +192,50 @@ export const evaluateDeclines = async (perQuery, { threshold, judge, cache = new
 
 // Drops the chunk text from perQuery before a result is saved.
 export const stripChunks = (perQuery) => perQuery.map(({ chunks, ...rest }) => rest);
+
+// Same idea for a decline run: the judge's raw verdict is small and worth
+// keeping, the document text it was shown is not written to disk.
+export const stripDecisionContext = (declines) =>
+  Object.fromEntries(
+    Object.entries(declines).map(([name, run]) => [
+      name,
+      { ...run, decisions: run.decisions.map(({ context, ...rest }) => rest) },
+    ])
+  );
+
+// A wrong decision, for the diagnostic block the eval prints: an answerable
+// question that was declined, or an unanswerable one that was answered.
+export const isWrongDecision = (d) => (d.expected ? d.decision !== 'answer' : d.decision === 'answer');
+
+// One line per excerpt, no newlines, truncated so the block stays readable.
+const clip = (value, max) => {
+  const text = String(value ?? '').replace(/\s+/g, ' ').trim();
+  return text.length > max ? `${text.slice(0, max)}...` : text || '(empty)';
+};
+
+// Explains every wrong decision of a decline run: the question, what the judge
+// actually replied, and the text it was given. The eval prints these lines, so
+// a single run on the owner's machine says why each decision went wrong
+// without needing the saved JSON or a second run.
+export const formatWrongDecisions = (name, decisions, { rawChars = 160, textChars = 220 } = {}) => {
+  const wrong = decisions.filter(isWrongDecision);
+  if (!wrong.length) return [];
+  const lines = [`${name}, wrong decisions (${wrong.length}) - question, judge verdict, text the judge saw:`];
+  for (const d of wrong) {
+    lines.push('');
+    lines.push(`  - ${d.question}`);
+    lines.push(
+      `    ${d.expected ? `answerable, declined (${d.decision})` : 'unanswerable, answered'}; ` +
+        `expected ${d.expected ?? 'no answer in the records'}`
+    );
+    lines.push(`    judge verdict: ${d.verdict === null ? 'unreadable' : d.verdict} | raw: ${clip(d.raw, rawChars)}`);
+    if (!d.context?.length) {
+      lines.push('    retrieved text: none above the threshold (declined before the judge ran)');
+    } else {
+      lines.push('    retrieved text given to the judge:');
+      for (const c of d.context) lines.push(`      [${c.documentId} score ${c.score}] ${clip(c.text, textChars)}`);
+    }
+  }
+  return lines;
+};
 

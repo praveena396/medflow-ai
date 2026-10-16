@@ -11,6 +11,9 @@ import {
   calibrateThreshold,
   evaluateDeclines,
   stripChunks,
+  stripDecisionContext,
+  isWrongDecision,
+  formatWrongDecisions,
 } from '../../benchmarks/lib/retrievalEval.js';
 import { extractText } from '../../src/utils/pdfExtractor.js';
 
@@ -168,6 +171,68 @@ describe('decline evaluation', () => {
     const again = await evaluateDeclines(perQuery, { threshold: 0.45, judge, cache });
     expect(again.judgeCalls).toBe(0);
     expect(again.correctDeclineRate).toBe(1);
+  });
+
+  // The owner can only run the eval against a live model, so one run has to
+  // explain every wrong decision: the judge's own reply and the text it saw.
+  it('records the judge reply and the judged text for each decision', async () => {
+    // Wrongly declines a2, an answerable question: the case the diagnostics exist for.
+    const judge = async (question) => {
+      const grounded = question.startsWith('a') && question !== 'a2';
+      return { grounded, raw: `{"answerable": ${grounded}}` };
+    };
+    const result = await evaluateDeclines(perQuery, { threshold: 0.45, judge });
+
+    const a1 = result.decisions.find((d) => d.question === 'a1');
+    expect(a1.raw).toBe('{"answerable": true}');
+    expect(a1.context).toEqual([
+      { documentId: 'd0', score: 0.8, text: 'chunk 0 for a1' },
+      { documentId: 'd1', score: 0.5, text: 'chunk 1 for a1' },
+    ]);
+    // Declined before the judge ran: no reply and nothing judged.
+    const u2 = result.decisions.find((d) => d.question === 'u2');
+    expect(u2).toMatchObject({ decision: 'low-similarity', verdict: null, raw: null, context: [] });
+
+    // Wrong decisions are the rows the diagnostic block prints.
+    expect(result.decisions.filter(isWrongDecision).map((d) => d.question)).toEqual(['a2']);
+    const a2 = result.decisions.find((d) => d.question === 'a2');
+    expect(a2).toMatchObject({ decision: 'not-grounded', verdict: false, raw: '{"answerable": false}' });
+    expect(a2.context[0].text).toBe('chunk 0 for a2');
+
+    // The judged document text is not written to the saved result file.
+    const saved = stripDecisionContext({ run: result });
+    expect(saved.run.decisions.every((d) => d.context === undefined)).toBe(true);
+    expect(saved.run.decisions[0].raw).toBe('{"answerable": true}');
+    expect(saved.run.correctDeclineRate).toBe(result.correctDeclineRate);
+  });
+
+  it('prints the question, the judge reply and the judged text for every wrong decision', () => {
+    const lines = formatWrongDecisions('test similarity+grounding @0.45', [
+      { question: 'am I allergic to latex', expected: 'allergy', decision: 'not-grounded', verdict: false, raw: '{"answerable": false}', context: [{ documentId: 'allergy', score: 0.61, text: `Allergy record. Latex: mild contact dermatitis. ${'x'.repeat(400)}` }] },
+      { question: 'what was my ferritin result', expected: null, decision: 'answer', verdict: true, raw: '{"answerable": true}', context: [{ documentId: 'cbc', score: 0.68, text: 'Ferritin to follow.' }] },
+      { question: 'what is my blood type', expected: null, decision: 'answer', verdict: null, raw: null, context: [] },
+      { question: 'my cholesterol', expected: 'lipids', decision: 'answer', verdict: true, raw: '{"answerable": true}', context: [] }, // right, so not printed
+    ]);
+    const text = lines.join('\n');
+
+    expect(lines[0]).toBe('test similarity+grounding @0.45, wrong decisions (3) - question, judge verdict, text the judge saw:');
+    expect(text).toContain('  - am I allergic to latex\n    answerable, declined (not-grounded); expected allergy');
+    expect(text).toContain('judge verdict: false | raw: {"answerable": false}');
+    expect(text).toContain('[allergy score 0.61] Allergy record. Latex: mild contact dermatitis.');
+    expect(text).toContain('unanswerable, answered; expected no answer in the records');
+    expect(text).toContain('judge verdict: unreadable | raw: (empty)');
+    expect(text).toContain('none above the threshold (declined before the judge ran)');
+    expect(text).not.toContain('my cholesterol');
+    // Each excerpt stays on one readable line.
+    expect(lines.every((line) => line.length <= 260)).toBe(true);
+    expect(text).toContain('xxx...');
+  });
+
+  it('marks a wrong decision in both directions', () => {
+    expect(isWrongDecision({ expected: 'd0', decision: 'not-grounded' })).toBe(true);
+    expect(isWrongDecision({ expected: 'd0', decision: 'answer' })).toBe(false);
+    expect(isWrongDecision({ expected: null, decision: 'answer' })).toBe(true);
+    expect(isWrongDecision({ expected: null, decision: 'low-similarity' })).toBe(false);
   });
 
   it('without a judge matches the similarity-only sweep', async () => {

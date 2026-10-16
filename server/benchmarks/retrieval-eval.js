@@ -1,8 +1,24 @@
-// Retrieval quality on a small labelled set (benchmarks/data/retrieval-eval.json).
-// Needs a running embedding model, so run it locally:
+// Retrieval and refusal quality on a labelled set of synthetic documents and
+// questions (benchmarks/data/retrieval-eval.json). Needs a running embedding
+// model, so run it locally. One command, from server/:
 //
-//   ollama pull nomic-embed-text      # once
-//   npm run bench:retrieval            # from server/
+//   ollama pull nomic-embed-text                 # once
+//   ollama pull llama3.2                         # once, for --grounding
+//   npm run bench:retrieval -- --grounding --calibrate=benchmarks/data/decline-calibration.json
+//
+// That single run reports, each as a rate with the counts behind it:
+//   - retrieval hit@1 and hit@4 on the answerable questions
+//   - correct refusal rate on the unanswerable questions (true positives)
+//   - over-refusal rate on the answerable questions (refused although the
+//     answer was retrieved), for similarity only and for similarity plus the
+//     grounding check
+// Nothing here is tuned to the test set and no expected result is hard-coded:
+// the threshold comes from RAG_SIMILARITY_THRESHOLD, or from the calibration
+// set when --calibrate is given.
+//
+// Without flags it runs retrieval and the similarity-only refusal rates:
+//
+//   npm run bench:retrieval
 //
 // (LLM_PROVIDER=openai with OPENAI_API_KEY works too.)
 //
@@ -10,12 +26,7 @@
 // ranked in memory exactly as MongoDB's driver does), or pass --store=chroma
 // (or --store=mongo) to choose. Chroma needs a running server at CHROMA_URL.
 //
-// Reports the top-4 hit
-// rate (the source document is among the 4 chunks the chatbot would use),
-// hit@1, mean reciprocal rank, and how often the similarity threshold
-// (RAG_SIMILARITY_THRESHOLD) declines answerable vs unanswerable questions.
-//
-// Decline evaluation (optional flags):
+// Optional flags:
 //   --grounding           also run the chatbot's grounding check
 //                         (src/ai/groundingCheck.js) on the retrieved chunks,
 //                         using the chat model (ollama pull llama3.2).
@@ -28,11 +39,11 @@
 //   --data=<file>         a different test set (default
 //                         benchmarks/data/retrieval-eval.json; paths are
 //                         relative to server/).
-// Every decline row reports both the share of unanswerable questions declined
-// and the share of answerable questions wrongly declined.
+// Every refusal row reports both the share of unanswerable questions refused
+// and the share of answerable questions wrongly refused, with counts.
 //
-// The sets are small and synthetic, so treat the result as a sanity check of
-// this setup, not a general accuracy figure.
+// The documents are synthetic records written for this project, so treat the
+// result as a sanity check of this setup, not a general accuracy figure.
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -66,6 +77,8 @@ const CALIBRATION_FILE = arg('calibrate');
 const GROUNDING = Boolean(arg('grounding'));
 
 const pct = (value) => (value === null || value === undefined ? 'n/a' : `${(value * 100).toFixed(1)}%`);
+// Every rate is reported with the counts behind it.
+const withCount = (rate, n, total) => `${pct(rate)} (${n}/${total})`;
 const resolve = (file) => (path.isAbsolute(file) ? file : path.join(BENCH_DIR, '..', file));
 
 // A question set; `documentsFrom` lets the calibration set reuse the test set's documents.
@@ -86,8 +99,10 @@ const runRetrieval = async (set, threshold) => {
 };
 
 const declineRow = (r) => ({
-  'unanswerable declined': `${pct(r.correctDeclineRate)} (${r.correctDeclines}/${r.unanswerableQueries})`,
-  'answerable declined': `${pct(r.falseDeclineRate)} (${r.falseDeclines}/${r.answerableQueries})`,
+  // True positives: unanswerable questions the chatbot refuses to answer.
+  'correct refusal (unanswerable set)': withCount(r.correctDeclineRate, r.correctDeclines, r.unanswerableQueries),
+  // False positives: answerable questions it refuses although it retrieved the answer.
+  'over-refusal (answerable set)': withCount(r.falseDeclineRate, r.falseDeclines, r.answerableQueries),
   ...(r.groundingCheck && { 'judge unreadable': r.judgeUnreadable, 'judge median ms': r.judgeMedianMs }),
 });
 
@@ -108,14 +123,31 @@ const main = async () => {
   );
 
   const result = await runRetrieval(testSet, threshold);
-  console.log(`Vector store: ${result.indexName}\n`);
+  console.log(`Vector store: ${result.indexName}`);
+  console.log(
+    `Question set: ${DATA_FILE} - ${result.documents} documents, ${result.chunks} chunks, ` +
+      `${result.answerableQueries} answerable questions, ${result.unanswerableQueries} unanswerable questions\n`
+  );
 
+  console.log(`Retrieval, answerable set only (${result.answerableQueries} questions):`);
   console.table({
-    [`hit rate @${TOP_K}`]: { value: pct(result.hitRateAtK) },
-    'hit rate @1': { value: pct(result.hitRateAt1) },
-    'mean reciprocal rank': { value: result.meanReciprocalRank },
-    'answerable but declined': { value: pct(result.falseDeclineRate) },
-    'unanswerable and declined': { value: pct(result.correctDeclineRate) },
+    'hit@1 (source document ranked first)': {
+      result: withCount(result.hitRateAt1, result.hitsAt1, result.answerableQueries),
+    },
+    [`hit@${TOP_K} (source document among the ${TOP_K} chunks used)`]: {
+      result: withCount(result.hitRateAtK, result.hitsAtK, result.answerableQueries),
+    },
+    'mean reciprocal rank': { result: result.meanReciprocalRank },
+  });
+
+  console.log(`\nRefusal, similarity threshold ${threshold} only:`);
+  console.table({
+    [`correct refusal, unanswerable set (${result.unanswerableQueries} questions)`]: {
+      result: withCount(result.correctDeclineRate, result.correctDeclines, result.unanswerableQueries),
+    },
+    [`over-refusal, answerable set (${result.answerableQueries} questions)`]: {
+      result: withCount(result.falseDeclineRate, result.falseDeclines, result.answerableQueries),
+    },
   });
 
   const misses = result.perQuery.filter((q) => q.expected && !q.rank);
@@ -154,7 +186,10 @@ const main = async () => {
       if (judge) declines[`${setName} similarity+grounding @${t}`] = await evaluateDeclines(perQuery, { threshold: t, judge, cache });
     }
   }
-  console.log('\nDecline decisions (test = data file above, calibration = --calibrate set):');
+  console.log(
+    '\nRefusal decisions, each rate with the counts behind it ' +
+      '(test = the data file above, calibration = the --calibrate set):'
+  );
   console.table(Object.fromEntries(Object.entries(declines).map(([name, r]) => [name, declineRow(r)])));
   if (judge) {
     for (const [name, r] of Object.entries(declines).filter(([n, row]) => row.groundingCheck && n.startsWith('test'))) {

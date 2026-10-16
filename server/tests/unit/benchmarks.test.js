@@ -1,3 +1,6 @@
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { describe, it, expect } from 'vitest';
 import { percentile, summarize } from '../../benchmarks/lib/stats.js';
 import { buildSamplePdf } from '../../benchmarks/lib/samplePdf.js';
@@ -70,6 +73,14 @@ describe('retrieval evaluation', () => {
     expect(result.falseDeclineRate).toBeCloseTo(1 / 3, 3);
     expect(result.correctDeclineRate).toBe(1);
     expect(result.perQuery[0].rank).toBe(1);
+    // Counts reported alongside each rate.
+    expect(result).toMatchObject({
+      unanswerableQueries: 1,
+      hitsAtK: 2,
+      hitsAt1: 2,
+      falseDeclines: 1,
+      correctDeclines: 1,
+    });
   });
 
   it('runs through a custom index (as the ChromaDB benchmark does)', async () => {
@@ -175,3 +186,51 @@ describe('decline evaluation', () => {
   });
 });
 
+
+// The eval sets are hand-labelled, so check the labels themselves: every
+// non-null `expected` must name a real document, no question may appear twice,
+// and no test question may also be a calibration question (the calibration set
+// is the only one allowed to choose a threshold). These assertions are about
+// the data, not about any measured result.
+describe('retrieval eval question sets', () => {
+  const dataDir = path.join(fileURLToPath(new URL('.', import.meta.url)), '../../benchmarks/data');
+  const load = (file) => JSON.parse(fs.readFileSync(path.join(dataDir, file), 'utf-8'));
+  const testSet = load('retrieval-eval.json');
+  const calibrationSet = load('decline-calibration.json');
+  const normalise = (q) => q.question.trim().toLowerCase();
+
+  it('labels every test question with a real document or null', () => {
+    const ids = new Set(testSet.documents.map((d) => d.id));
+    const unknown = testSet.queries.filter((q) => q.expected !== null && !ids.has(q.expected));
+    expect(unknown).toEqual([]);
+    expect(testSet.queries.every((q) => typeof q.question === 'string' && q.question.trim())).toBe(true);
+  });
+
+  it('labels every calibration question against the shared documents', () => {
+    expect(calibrationSet.documentsFrom).toBe('retrieval-eval.json');
+    const ids = new Set(testSet.documents.map((d) => d.id));
+    const unknown = calibrationSet.queries.filter((q) => q.expected !== null && !ids.has(q.expected));
+    expect(unknown).toEqual([]);
+  });
+
+  it('has no duplicate questions and no overlap between the two sets', () => {
+    for (const set of [testSet, calibrationSet]) {
+      const questions = set.queries.map(normalise);
+      expect(new Set(questions).size).toBe(questions.length);
+    }
+    const calibration = new Set(calibrationSet.queries.map(normalise));
+    const shared = testSet.queries.map(normalise).filter((q) => calibration.has(q));
+    expect(shared).toEqual([]);
+  });
+
+  it('is big enough to report refusal rates on', () => {
+    const answerable = testSet.queries.filter((q) => q.expected);
+    const unanswerable = testSet.queries.filter((q) => !q.expected);
+    expect(testSet.queries.length).toBeGreaterThanOrEqual(100);
+    expect(unanswerable.length).toBeGreaterThanOrEqual(30);
+    expect(answerable.length).toBeGreaterThanOrEqual(60);
+    // Every document is the source of at least one answerable question.
+    const covered = new Set(answerable.map((q) => q.expected));
+    expect(covered.size).toBe(testSet.documents.length);
+  });
+});

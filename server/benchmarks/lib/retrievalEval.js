@@ -72,6 +72,7 @@ export const evaluateRetrieval = async ({ documents, queries, embed, topK = 4, t
   const unanswerable = perQuery.filter((q) => !q.expected);
   const rate = (items, predicate) =>
     items.length ? Number((items.filter(predicate).length / items.length).toFixed(4)) : null;
+  const count = (items, predicate) => items.filter(predicate).length;
 
   return {
     topK,
@@ -80,6 +81,11 @@ export const evaluateRetrieval = async ({ documents, queries, embed, topK = 4, t
     chunks: chunkCount,
     answerableQueries: answerable.length,
     unanswerableQueries: unanswerable.length,
+    // Counts behind the rates below, so a rate is never reported on its own.
+    hitsAtK: count(answerable, (q) => q.rank >= 1),
+    hitsAt1: count(answerable, (q) => q.rank === 1),
+    falseDeclines: count(answerable, (q) => q.declined),
+    correctDeclines: count(unanswerable, (q) => q.declined),
     // Share of answerable questions whose source document was retrieved at all / first.
     hitRateAtK: rate(answerable, (q) => q.rank >= 1),
     hitRateAt1: rate(answerable, (q) => q.rank === 1),

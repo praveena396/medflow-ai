@@ -27,7 +27,7 @@
 
 <br/>
 
-[Grounded retrieval](#the-core-a-chatbot-that-declines) · [Features](#features) · [Architecture](#architecture) · [Setup](#setup) · [API](#api-reference) · [Benchmarks](#benchmarks) · [Deploy](#deploy) · [Roadmap](#roadmap)
+[Grounded retrieval](#the-core-a-chatbot-that-declines) · [Features](#features) · [Architecture](#architecture) · [Setup](#setup) · [API](#api-reference) · [Benchmarks](#benchmarks) · [Measured results](#measured-results) · [Deploy](#deploy) · [Roadmap](#roadmap)
 
 <br/>
 
@@ -52,7 +52,9 @@ A similarity score only tells you a chunk of text is *about* something close to 
 
 Only then does the question reach the LLM, with a prompt that restricts it to those chunks, and the reply carries the source file names and scores. Every answer and every refusal is written to the append-only audit log.
 
-Because "it refuses correctly" is a claim, not a feeling, it is measured rather than asserted. [`npm run bench:retrieval`](#the-retrieval-and-refusal-eval) runs a labelled set of synthetic documents and **110 questions — 69 answerable with a known source document and 41 that the documents genuinely do not answer**, most of them deliberate near-misses (a test the records say is pending, a value next to one that is recorded, a different scan of an organ the records do cover). One run reports retrieval hit@1 and hit@4 on the answerable set, the correct-refusal rate on the unanswerable set, and the over-refusal rate on the answerable set — each as a rate *and* the counts behind it. The similarity threshold can be calibrated on a [separate question set](server/benchmarks/data/decline-calibration.json), never on the test set. No expected results are hard-coded, and no figures are quoted in this README: [Benchmarks](#the-retrieval-and-refusal-eval) has the command, and the numbers belong to whoever runs it, with the machine they ran it on.
+Because "it refuses correctly" is a claim, not a feeling, it is measured rather than asserted. [`npm run bench:retrieval`](#the-retrieval-and-refusal-eval) runs a labelled set of synthetic documents and **110 questions — 69 answerable with a known source document and 41 that the documents genuinely do not answer**, most of them deliberate near-misses (a test the records say is pending, a value next to one that is recorded, a different scan of an organ the records do cover). One run reports retrieval hit@1 and hit@4 on the answerable set, the correct-refusal rate on the unanswerable set, and the over-refusal rate on the answerable set — each as a rate *and* the counts behind it. The similarity threshold can be calibrated on a [separate question set](server/benchmarks/data/decline-calibration.json), never on the test set. No expected results are hard-coded.
+
+That eval has now been run once end to end, and [Measured results](#measured-results) reports it: on the answerable set, hit@1 **92.8% (64/69)** and hit@4 **98.6% (68/69)**; at the recommended operating point — similarity threshold `0.45` plus the grounding check — correct refusal **85.4% (35/41)** for an over-refusal cost of **7.2% (5/69)**. The similarity floor on its own refuses almost nothing (4.9%, 2/41), so essentially all of the refusal behaviour comes from the second gate. Those figures are from one run on one machine, with the models and the question set named alongside them; they are a sanity check on this configuration, not a general accuracy claim.
 
 **Tests and CI.** [![Server tests](https://github.com/praveena396/medflow-ai/actions/workflows/server-tests.yml/badge.svg)](https://github.com/praveena396/medflow-ai/actions/workflows/server-tests.yml) Vitest unit tests and Supertest API tests cover the decline logic, the grounding-verdict parser, prompt sanitising, the access rules, the rate limits and the audit log's append-only behaviour, and they run on every push and pull request against MongoDB, Redis and ChromaDB service containers. The client is linted and built in a second workflow. See [Test](#5-test).
 
@@ -172,6 +174,8 @@ cd server && npm run bench:retrieval -- --grounding --calibrate=benchmarks/data/
 ```
 
 That reports retrieval hit@1 and hit@4 on the answerable questions, the correct-refusal rate on the unanswerable ones and the over-refusal rate on the answerable ones — with and without the grounding check, each with the counts behind it — and suggests a threshold calibrated on a separate question set. See [Benchmarks](#the-retrieval-and-refusal-eval) for what the set contains and how to read the output.
+
+On the one measured run so far, the calibration procedure selected `0.57`, but on the held-out test set `0.57` is the worse operating point: it buys 4.8 points of correct refusal and costs 11.6 points of over-refusal, and it drops three genuinely answerable questions below the similarity floor before the grounding check even runs. The default stays `0.45`, and that is the recommended setting — see [Measured results](#measured-results) and [Known limitations of the eval](#known-limitations-of-the-eval).
 
 ---
 
@@ -380,9 +384,9 @@ What is implemented:
 
 ## Benchmarks
 
-The scripts live in [`server/benchmarks/`](server/benchmarks). Run them from `server/`. Results are written as JSON to `server/benchmarks/results/` (git-ignored) together with the machine details. **Any figures quoted for this project should come from these scripts, along with the environment they ran in.** None are recorded here.
+The scripts live in [`server/benchmarks/`](server/benchmarks). Run them from `server/`. Results are written as JSON to `server/benchmarks/results/` (git-ignored) together with the machine details. **Any figures quoted for this project should come from these scripts, along with the environment they ran in.** The retrieval and refusal eval has been run and its numbers are recorded below in [Measured results](#measured-results); the load test and the pipeline benchmark have no recorded figures here.
 
-> **How to read the load-test numbers.** The one `bench:api` run this project has done so far was on a **single GitHub-hosted GitHub Actions runner with the load generator, the API, MongoDB and Redis all on that same runner** (the `api-load` job below, autocannon at 50 connections). That means the client competes with the server for the same two cores and nothing crosses a network, so the throughput and p95 from that run describe *that* arrangement. It is a **relative benchmark** — useful for comparing one commit against another on the same setup — and **not a capacity claim** for a real deployment. The same applies to `bench:retrieval` and `bench:pipeline`, which run the embedding and chat models on the runner's CPU with no GPU.
+> **How to read the load-test numbers.** The one `bench:api` run this project has done so far was on a **single GitHub-hosted GitHub Actions runner with the load generator, the API, MongoDB and Redis all on that same runner** (the `api-load` job below, autocannon at 50 connections). That means the client competes with the server for the same two cores and nothing crosses a network, so the throughput and p95 from that run describe *that* arrangement. It is a **relative benchmark** — useful for comparing one commit against another on the same setup — and **not a capacity claim** for a real deployment. The same applies to `bench:retrieval` and `bench:pipeline` when they run in CI, on the runner's CPU with no GPU. The retrieval and refusal figures recorded in [Measured results](#measured-results) were *not* measured on a runner: they come from a local machine running Ollama, and the judge latencies in particular describe that machine.
 
 | Command | Measures | Needs |
 |---|---|---|
@@ -435,11 +439,52 @@ The last two are reported twice: for the similarity threshold alone, and for the
 
 The question set is [`benchmarks/data/retrieval-eval.json`](server/benchmarks/data/retrieval-eval.json): 10 synthetic documents and 110 questions, 69 of them answerable with a labelled source document and 41 that the documents genuinely do not answer. The unanswerable block is mostly **near-misses** — a test the records say is pending but whose result is absent (`"What was my ferritin result?"`), a value next to one that is recorded (`"What was my oxygen saturation when I was admitted?"`, where only the discharge figure exists), a different scan of an organ the records do cover (`"What did my thyroid ultrasound show?"`), an allergen not on the allergy list (`"Am I allergic to aspirin?"`). Those are the questions a similarity-only system answers confidently and wrongly. Every question was written from the text of these documents, and `tests/unit/benchmarks.test.js` checks the labels themselves: every non-null `expected` names a real document, no question is duplicated, and no test question also appears in the calibration set.
 
-No expected results are hard-coded anywhere, the thresholds are not tuned on the test set, and **no figures from this eval are quoted in this README** — run it and read the table, with the machine you ran it on. The documents are synthetic and the set is small, so treat the output as a sanity check on this configuration, not a general accuracy claim.
+No expected results are hard-coded anywhere and the thresholds are not tuned on the test set. The documents are synthetic and the set is small, so treat the figures below as a sanity check on this configuration, not a general accuracy claim.
+
+### Measured results
+
+One measured run, on a local machine with [Ollama](https://ollama.com): `nomic-embed-text` for the embeddings, `llama3.2` as the grounding judge, and the in-process memory index, which applies the same cosine ranking as the default `VECTOR_STORE=mongo` driver. The test set is the 110-question set — 69 answerable, 41 unanswerable — over the 10 **synthetic** sample records. All four refusal configurations below come from that single run.
+
+**Retrieval, answerable set (69 questions)**
+
+| Metric | Result |
+|---|---|
+| hit@1 (source document ranked first) | **92.8%** (64/69) |
+| hit@4 (source document among the 4 chunks used) | **98.6%** (68/69) |
+| mean reciprocal rank | **0.9565** |
+
+**Refusal, four configurations from the same run**
+
+| Configuration | Correct refusal (41 unanswerable) | Over-refusal (69 answerable) | Grounding-judge latency, median |
+|---|---|---|---|
+| similarity only, threshold `0.45` | 4.9% (2/41) | 0.0% (0/69) | — |
+| **similarity + grounding, threshold `0.45`** — recommended | **85.4%** (35/41) | **7.2%** (5/69) | 8386 ms |
+| similarity only, threshold `0.57` | 21.9% (9/41) | 4.3% (3/69) | — |
+| similarity + grounding, threshold `0.57` | 90.2% (37/41) | 18.8% (13/69) | 3182 ms |
+
+**Recommended operating point: `RAG_SIMILARITY_THRESHOLD=0.45` with `RAG_GROUNDING_CHECK=true`.** Two things are visible in that table. First, the similarity floor alone is nearly useless as a refusal gate on this set — at `0.45` it catches 2 of 41 unanswerable questions — so the grounding check is what makes the chatbot decline, taking correct refusal from 4.9% to 85.4%. Second, and less comfortably: **the calibration procedure selected `0.57`, but on the held-out test set `0.57` is a worse operating point than `0.45`.** Raising the threshold buys 4.8 points of correct refusal (85.4% → 90.2%) and costs 11.6 points of over-refusal (7.2% → 18.8%) — 8 more answerable questions refused to catch 2 more unanswerable ones. Three of those extra refusals are questions whose source document is retrievable but now falls below the similarity floor, so they are declined before the judge ever runs: *"What was my ejection fraction?"*, *"What did the Holter monitor find?"*, *"Do I need a foot examination?"* Declining a question the patient's own records answer is a real failure, so the default stays at `0.45` and the calibrated value is not adopted.
+
+**Calibration set (36 questions: 15 unanswerable, 21 answerable).** This is the separate set used to choose a threshold, never the test set:
+
+| Configuration | Correct refusal (15 unanswerable) | Over-refusal (21 answerable) |
+|---|---|---|
+| similarity only, threshold `0.45` | 0.0% (0/15) | — |
+| similarity + grounding, threshold `0.45` | 100% (15/15) | 28.6% (6/21) |
+| similarity only, threshold `0.57` | 73.3% (11/15) | 4.8% (1/21) |
+| similarity + grounding, threshold `0.57` | 100% (15/15) | 28.6% (6/21) |
+
+With the grounding check on, `0.45` and `0.57` are indistinguishable on the calibration set — both refuse all 15 unanswerable questions at the same 28.6% over-refusal — which is exactly why the procedure had no reason to prefer the lower threshold, and why it went on to pick the higher one.
+
+### Known limitations of the eval
+
+- **The calibration objective optimizes for correct refusal without weighing over-refusal.** `--calibrate` picks the *highest* threshold in 0.30–0.70 that keeps over-refusal within its cap on the calibration set. On the measured run that selected `0.57`, which is the worse of the two operating points on the held-out test set. The threshold is therefore chosen by hand (`0.45`) rather than taken from the procedure. Fixing this properly means scoring candidate thresholds on a cost that weighs a wrong refusal against a wrong answer — and that weighting is a product decision, not a benchmark detail — so it is recorded here rather than quietly patched.
+- **The calibration set is too small, and too easy, to separate the candidates.** 15 unanswerable questions, and the grounding check clears all of them at both thresholds; there is no signal left for the procedure to act on.
+- **The grounding check costs several seconds per question.** It is one extra LLM call before every answer — a median of 8386 ms at `0.45` and 3182 ms at `0.57` on the measured machine, with local `llama3.2` on CPU. That is a deliberate trade-off: the second gate is the only thing doing real refusal work (4.9% → 85.4%), and the latency falls on answered questions, which is where the project would rather spend it. A smaller or hosted judge model, or caching verdicts, would cut it.
+- **One run, one machine, 110 questions, synthetic records.** Both rates have confidence intervals wider than the differences being discussed, and the judge is a sampling LLM, so a rerun will not reproduce these counts exactly.
 
 The **API benchmark** workflow ([`.github/workflows/benchmark.yml`](.github/workflows/benchmark.yml)) is started by hand from the Actions tab, with a choice of concurrency and duration. It has two jobs:
 
-- `api-load` starts the API against MongoDB and Redis service containers and runs `bench:api`. The load generator, the API, MongoDB and Redis are all on that one runner, which is where the only numbers this project has were measured — see the note at the top of this section.
+- `api-load` starts the API against MongoDB and Redis service containers and runs `bench:api`. The load generator, the API, MongoDB and Redis are all on that one runner, which is where the only load-test numbers this project has were measured — see the note at the top of this section.
 - `retrieval-and-pipeline` installs Ollama, pulls `nomic-embed-text` and `llama3.2` and runs `bench:pipeline` and `bench:retrieval` on the runner's CPU. The retrieval benchmark runs twice: once with the MongoDB ranking plus the decline evaluation (`--grounding --calibrate=…`), and once against a ChromaDB service container.
 
 Both print their JSON results in the job log and upload them as an artifact. Everything runs on one shared GitHub-hosted runner per job, so those numbers describe that runner, not a production deployment.
